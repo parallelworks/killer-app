@@ -2,9 +2,10 @@
 # setup_tunnel.sh — Create a reverse SSH tunnel from on-prem to cloud
 #
 # Environment variables:
-#   CLOUD_RESOURCE  - Name of the cloud resource (e.g., googlerockyv3)
-#   DASHBOARD_PORT  - Port of the dashboard on this machine
-#   PW_USER         - ACTIVATE username for SSH
+#   CLOUD_RESOURCE      - Name of the cloud resource (e.g., googlerockyv3)
+#   CLOUD_RESOURCE_URI  - Full resource URI (e.g., pw://user/name) — fallback
+#   DASHBOARD_PORT      - Port of the dashboard on this machine
+#   PW_USER             - ACTIVATE username for SSH
 
 set -e
 
@@ -12,14 +13,31 @@ echo "=========================================="
 echo "Setting up reverse tunnel: $(date)"
 echo "=========================================="
 echo "Cloud resource: ${CLOUD_RESOURCE}"
+echo "Cloud resource URI: ${CLOUD_RESOURCE_URI}"
 echo "Dashboard port: ${DASHBOARD_PORT}"
 echo "PW user: ${PW_USER}"
 
 JOB_DIR="${PW_PARENT_JOB_DIR%/}"
 
+# Determine SSH target — use resource name if available, otherwise full URI
+SSH_TARGET="${CLOUD_RESOURCE}"
+if [ -z "${SSH_TARGET}" ]; then
+    # CLI passes full URI like pw://user/name — use it directly
+    SSH_TARGET="${CLOUD_RESOURCE_URI}"
+fi
+echo "SSH target: ${SSH_TARGET}"
+
+# Helper: run command on cloud via pw ssh proxy
+run_on_cloud() {
+    ssh -i ~/.ssh/pwcli \
+        -o StrictHostKeyChecking=no \
+        -o ProxyCommand="pw ssh --proxy-command %h" \
+        "${PW_USER}@${SSH_TARGET}" "$@"
+}
+
 # Allocate a port on the cloud side for the tunnel
 echo "Allocating port on cloud..."
-TUNNEL_PORT=$(pw ssh "${CLOUD_RESOURCE}" 'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
+TUNNEL_PORT=$(run_on_cloud 'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
 
 if [ -z "${TUNNEL_PORT}" ] || ! [[ "${TUNNEL_PORT}" =~ ^[0-9]+$ ]]; then
     echo "[ERROR] Failed to allocate port on cloud (got: '${TUNNEL_PORT}')"
@@ -37,7 +55,7 @@ ssh -i ~/.ssh/pwcli \
     -o ServerAliveInterval=15 \
     -o ProxyCommand="pw ssh --proxy-command %h" \
     -R "${TUNNEL_PORT}:localhost:${DASHBOARD_PORT}" \
-    -N "${PW_USER}@${CLOUD_RESOURCE}" &
+    -N "${PW_USER}@${SSH_TARGET}" &
 TUNNEL_PID=$!
 sleep 3
 

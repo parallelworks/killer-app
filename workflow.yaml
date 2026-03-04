@@ -163,6 +163,7 @@ jobs:
             -F "image_size=${{ inputs.render_settings.image_size }}"
 
           echo "DASHBOARD_URL=${DASHBOARD_URL}" >> "${OUTPUTS}"
+          echo "DASHBOARD_PORT=${DASHBOARD_PORT}" >> "${OUTPUTS}"
           echo "TOTAL_TILES=${TOTAL_TILES}" >> "${OUTPUTS}"
           echo "HALF_TILES=${HALF}" >> "${OUTPUTS}"
           echo "Dashboard configured: ${GRID_SIZE}x${GRID_SIZE} grid, ${{ inputs.render_settings.image_size }}px tiles"
@@ -200,7 +201,8 @@ jobs:
         run: |
           set -e
           export CLOUD_RESOURCE="${{ inputs.cloud_resource.name }}"
-          export DASHBOARD_PORT=$(cat "${PW_PARENT_JOB_DIR}/SESSION_PORT")
+          export CLOUD_RESOURCE_URI="${{ inputs.cloud_resource }}"
+          export DASHBOARD_PORT=${{ needs.configure_dashboard.outputs.DASHBOARD_PORT }}
           bash scripts/setup_tunnel.sh
 
   # =============================================================================
