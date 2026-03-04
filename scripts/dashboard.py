@@ -31,6 +31,37 @@ async def index():
     return (TEMPLATE_DIR / "index.html").read_text()
 
 
+def _compute_throughput_history():
+    """Build per-second throughput buckets from tile arrival times."""
+    if not state["tiles"] or not state["start_time"]:
+        return []
+    # Collect (relative_time, site_id) for each tile
+    arrivals = []
+    for tile_info in state["tiles"].values():
+        t = tile_info.get("arrival_time")
+        if t is None:
+            continue
+        arrivals.append((t - state["start_time"], tile_info["metadata"].get("site_id", "unknown")))
+    if not arrivals:
+        return []
+    arrivals.sort()
+    # Bucket into 1-second windows
+    max_t = arrivals[-1][0]
+    buckets = []
+    bucket_start = 0
+    while bucket_start <= max_t:
+        bucket_end = bucket_start + 1.0
+        per_site = {}
+        total = 0
+        for rel_t, sid in arrivals:
+            if bucket_start <= rel_t < bucket_end:
+                per_site[sid] = per_site.get(sid, 0) + 1
+                total += 1
+        buckets.append({"ts_offset": round(bucket_start, 1), "total": total, "perSite": per_site})
+        bucket_start += 1.0
+    return buckets
+
+
 @app.get("/api/state")
 async def get_state():
     """Return current state for late-joining browsers."""
@@ -44,6 +75,7 @@ async def get_state():
         "elapsed_s": round(time.time() - state["start_time"], 1) if state["start_time"] else 0,
         "total_tiles": state["grid_size"] ** 2,
         "completed_tiles": len(state["tiles"]),
+        "throughput_history": _compute_throughput_history(),
     }
 
 
@@ -66,15 +98,16 @@ async def receive_tile(
     state["grid_size"] = meta.get("grid_size", state["grid_size"])
     state["image_size"] = meta.get("width", state["image_size"])
 
-    state["tiles"][(tx, ty)] = {"png_b64": png_b64, "metadata": meta}
+    now = time.time()
+    state["tiles"][(tx, ty)] = {"png_b64": png_b64, "metadata": meta, "arrival_time": now}
 
     # Update site stats
     if site_id not in state["site_stats"]:
-        state["site_stats"][site_id] = {"count": 0, "total_render_ms": 0, "first_ts": time.time()}
+        state["site_stats"][site_id] = {"count": 0, "total_render_ms": 0, "first_ts": now}
     stats = state["site_stats"][site_id]
     stats["count"] += 1
     stats["total_render_ms"] += meta.get("render_time_ms", 0)
-    stats["last_ts"] = time.time()
+    stats["last_ts"] = now
 
     # Broadcast to all WebSocket clients
     msg = json.dumps({

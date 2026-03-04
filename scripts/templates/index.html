@@ -321,9 +321,9 @@ let completedTiles = 0;
 let startTime = null;
 const tileData = {};
 const siteStats = {};
-const throughputHistory = []; // [{ts, cloud, onprem, total}]
-let lastThroughputCheck = 0;
-let lastTileCount = 0;
+const throughputHistory = []; // [{ts, total, perSite}]
+let lastThroughputCheck = null;
+let lastTileCounts = {}; // per-site counts at last check
 
 // Canvas setup
 const canvas = document.getElementById('fractal-canvas');
@@ -381,46 +381,60 @@ function drawThroughput() {
   tCanvas.height = rect.height * window.devicePixelRatio;
   tCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
   const w = rect.width, h = rect.height;
+  const pad = 4;
+  const plotH = h - pad;
 
   tCtx.fillStyle = '#0a0e17';
   tCtx.fillRect(0, 0, w, h);
 
-  if (throughputHistory.length < 2) return;
+  if (throughputHistory.length < 1) return;
 
-  const maxVal = Math.max(...throughputHistory.map(d => d.total), 1);
-  const points = throughputHistory.slice(-60); // last 60 entries
-
-  // Draw area for each site
+  const points = throughputHistory.slice(-60);
   const sites = Object.keys(SITE_COLORS);
-  sites.forEach(siteId => {
-    const color = getSiteColor(siteId);
-    tCtx.beginPath();
-    tCtx.moveTo(0, h);
-    points.forEach((p, i) => {
-      const x = (i / (points.length - 1)) * w;
-      const val = p.perSite[siteId] || 0;
-      const y = h - (val / maxVal) * (h - 10);
-      if (i === 0) tCtx.lineTo(x, y);
-      else tCtx.lineTo(x, y);
-    });
-    tCtx.lineTo(w, h);
-    tCtx.closePath();
-    tCtx.fillStyle = color + '30';
-    tCtx.fill();
 
-    // Line
-    tCtx.beginPath();
-    points.forEach((p, i) => {
-      const x = (i / (points.length - 1)) * w;
-      const val = p.perSite[siteId] || 0;
-      const y = h - (val / maxVal) * (h - 10);
-      if (i === 0) tCtx.moveTo(x, y);
-      else tCtx.lineTo(x, y);
-    });
-    tCtx.strokeStyle = color;
-    tCtx.lineWidth = 2;
-    tCtx.stroke();
+  // For stacked bar chart, compute max stacked total
+  let maxVal = 1;
+  points.forEach(p => {
+    let stacked = 0;
+    sites.forEach(s => { stacked += (p.perSite[s] || 0); });
+    if (stacked > maxVal) maxVal = stacked;
   });
+
+  // Draw stacked bars
+  const barW = Math.max(Math.floor(w / Math.max(points.length, 1)) - 1, 3);
+  const gap = Math.max(Math.floor((w - barW * points.length) / Math.max(points.length, 1)), 1);
+
+  points.forEach((p, i) => {
+    const x = i * (barW + gap);
+    let yBottom = h;
+    sites.forEach(siteId => {
+      const val = p.perSite[siteId] || 0;
+      if (val <= 0) return;
+      const barH = Math.max((val / maxVal) * plotH, 1);
+      const color = getSiteColor(siteId);
+      tCtx.fillStyle = color + 'aa';
+      tCtx.fillRect(x, yBottom - barH, barW, barH);
+      yBottom -= barH;
+    });
+  });
+
+  // Draw connecting lines per site on top
+  if (points.length >= 2) {
+    sites.forEach(siteId => {
+      const color = getSiteColor(siteId);
+      tCtx.beginPath();
+      points.forEach((p, i) => {
+        const x = i * (barW + gap) + barW / 2;
+        const val = p.perSite[siteId] || 0;
+        const y = h - (val / maxVal) * plotH;
+        if (i === 0) tCtx.moveTo(x, y);
+        else tCtx.lineTo(x, y);
+      });
+      tCtx.strokeStyle = color;
+      tCtx.lineWidth = 1.5;
+      tCtx.stroke();
+    });
+  }
 }
 
 function updateStats(elapsed_s) {
@@ -481,23 +495,26 @@ function updateStats(elapsed_s) {
     });
   }
 
-  // Record throughput
+  // Record throughput (only during live rendering, not late-join)
   const now = Date.now() / 1000;
-  if (now - lastThroughputCheck >= 1) {
-    const dt = now - lastThroughputCheck;
-    const newTiles = completedTiles - lastTileCount;
-    const perSite = {};
-    siteIds.forEach(s => { perSite[s] = (siteStats[s].count || 0); });
-    // Calculate per-site delta from last snapshot
-    if (throughputHistory.length > 0) {
-      const prev = throughputHistory[throughputHistory.length - 1];
-      siteIds.forEach(s => {
-        perSite[s] = ((siteStats[s].count || 0) - (prev.perSite[s] || 0)) / dt;
-      });
-    }
-    throughputHistory.push({ ts: now, total: newTiles / dt, perSite });
+  if (lastThroughputCheck === null) {
+    // Initialize on first call — snapshot current state, don't record a point
     lastThroughputCheck = now;
-    lastTileCount = completedTiles;
+    siteIds.forEach(s => { lastTileCounts[s] = siteStats[s].count || 0; });
+  } else if (now - lastThroughputCheck >= 1) {
+    const dt = now - lastThroughputCheck;
+    const perSite = {};
+    let total = 0;
+    siteIds.forEach(s => {
+      const current = siteStats[s].count || 0;
+      const prev = lastTileCounts[s] || 0;
+      const rate = (current - prev) / dt;
+      perSite[s] = rate;
+      total += rate;
+      lastTileCounts[s] = current;
+    });
+    throughputHistory.push({ ts: now, total, perSite });
+    lastThroughputCheck = now;
     drawThroughput();
   }
 }
@@ -531,6 +548,22 @@ function connect() {
           completedTiles = data.completed_tiles;
           if (data.elapsed_s > 0 && !startTime) startTime = Date.now() / 1000 - data.elapsed_s;
           Object.assign(siteStats, data.site_stats);
+          // Load server-computed throughput history for late-joiners
+          if (data.throughput_history && data.throughput_history.length > 0) {
+            throughputHistory.length = 0;
+            const baseTs = startTime || (Date.now() / 1000 - data.elapsed_s);
+            data.throughput_history.forEach(b => {
+              throughputHistory.push({
+                ts: baseTs + b.ts_offset,
+                total: b.total,
+                perSite: b.perSite
+              });
+            });
+            // Initialize live tracking from current state
+            lastThroughputCheck = Date.now() / 1000;
+            Object.keys(siteStats).forEach(s => { lastTileCounts[s] = siteStats[s].count || 0; });
+            drawThroughput();
+          }
           resizeCanvas();
           updateStats(data.elapsed_s);
         });
