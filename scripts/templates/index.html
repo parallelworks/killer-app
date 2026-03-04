@@ -362,8 +362,9 @@ let offCtx = null;
 let tilePixels = 128;
 
 // Zoom/pan state
-let zoom = 1;
+let zoom = 1;  // Will be set to fit-zoom on first resize
 let panX = 0, panY = 0;
+let fitZoom = 1; // Zoom level that fits entire fractal in view
 let isDragging = false;
 let dragStartX = 0, dragStartY = 0;
 let panStartX = 0, panStartY = 0;
@@ -392,9 +393,15 @@ function resizeCanvas() {
   const area = canvas.parentElement;
   const maxW = area.clientWidth - 64;
   const maxH = area.clientHeight - 64;
-  const fitSize = Math.min(maxW, maxH, gridSize * 128);
+  const fitSize = Math.min(maxW, maxH);
   canvas.width = fitSize;
   canvas.height = fitSize;
+  // Calculate zoom that fits entire fractal in the visible canvas
+  fitZoom = fitSize / offscreen.width;
+  // On first load or reset, use fit zoom
+  if (zoom === 1 && panX === 0 && panY === 0) {
+    zoom = fitZoom;
+  }
   // Redraw offscreen tiles
   if (offscreen.width !== gridSize * tilePixels) initOffscreen();
   offCtx.fillStyle = '#0a0e17';
@@ -478,9 +485,9 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', () => { isDragging = false; });
 
-// Double-click to reset zoom
+// Double-click to reset zoom (fit entire fractal)
 canvas.addEventListener('dblclick', () => {
-  zoom = 1; panX = 0; panY = 0;
+  zoom = fitZoom; panX = 0; panY = 0;
   renderView();
 });
 
