@@ -215,31 +215,17 @@ jobs:
 
       - name: Render tiles (cloud)
         early-cancel: any-job-failed
-        uses: marketplace/job_runner/v4.0
-        with:
-          resource: ${{ inputs.cloud_resource }}
-          rundir: "${PW_PARENT_JOB_DIR}"
-          scheduler: ${{ inputs.submit_cloud_to_scheduler }}
-          inject_markers: true
-          env:
-            DASHBOARD_URL: ${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}
-            SITE_ID: cloud-slurm
-            TILE_START: ${{ needs.configure_dashboard.outputs.HALF_TILES }}
-            TILE_END: ${{ needs.configure_dashboard.outputs.TOTAL_TILES }}
-            GRID_SIZE: ${{ inputs.render_settings.grid_size }}
-            IMAGE_SIZE: ${{ inputs.render_settings.image_size }}
-            PALETTE: ${{ inputs.render_settings.palette }}
-          slurm:
-            is_disabled: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-            account: ${{ inputs.slurm.account }}
-            partition: ${{ inputs.slurm.partition }}
-            qos: ${{ inputs.slurm.qos }}
-            time: ${{ inputs.slurm.time }}
-            cpus_per_task: ${{ inputs.slurm.cpus_per_task }}
-            scheduler_directives: |
-              ${{ inputs.slurm.scheduler_directives }}
-          use_existing_script: true
-          script_path: "${PW_PARENT_JOB_DIR}/scripts/render_tiles.sh"
+        run: |
+          set -e
+          export DASHBOARD_URL="${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}"
+          export SITE_ID="cloud-slurm"
+          export TILE_START="${{ needs.configure_dashboard.outputs.HALF_TILES }}"
+          export TILE_END="${{ needs.configure_dashboard.outputs.TOTAL_TILES }}"
+          export GRID_SIZE="${{ inputs.render_settings.grid_size }}"
+          export IMAGE_SIZE="${{ inputs.render_settings.image_size }}"
+          export PALETTE="${{ inputs.render_settings.palette }}"
+
+          bash scripts/render_tiles.sh
 
   # =============================================================================
   # COMPLETE — Wait for both renderers, print summary
