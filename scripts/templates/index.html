@@ -225,12 +225,8 @@
   <div class="header-right">
     <div class="legend" id="header-legend">
       <div class="legend-item">
-        <div class="legend-dot" style="background:var(--cloud)"></div>
-        <span>Cloud</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-dot" style="background:var(--onprem)"></div>
-        <span>On-Prem</span>
+        <div class="legend-dot" style="background:var(--dim)"></div>
+        <span>Waiting for sites...</span>
       </div>
     </div>
     <div id="status-badge" class="status-badge waiting">
@@ -303,22 +299,29 @@
 
 <script>
 const SITE_COLORS = {};
-const EXTRA_COLORS = ['#22c55e', '#ef4444', '#a855f7', '#ec4899'];
-let extraColorIdx = 0;
+const COLOR_PALETTE = ['#3b82f6', '#f59e0b', '#22c55e', '#ef4444', '#a855f7', '#ec4899'];
+let colorIdx = 0;
 function getSiteColor(siteId) {
   if (!SITE_COLORS[siteId]) {
-    // Assign colors based on site type, not arrival order
-    const id = siteId.toLowerCase();
-    if (id.includes('cloud') || id.includes('slurm')) {
-      SITE_COLORS[siteId] = '#3b82f6'; // blue = cloud (matches header legend)
-    } else if (id.includes('onprem') || id.includes('ssh')) {
-      SITE_COLORS[siteId] = '#f59e0b'; // orange = on-prem (matches header legend)
-    } else {
-      SITE_COLORS[siteId] = EXTRA_COLORS[extraColorIdx % EXTRA_COLORS.length];
-      extraColorIdx++;
-    }
+    SITE_COLORS[siteId] = COLOR_PALETTE[colorIdx % COLOR_PALETTE.length];
+    colorIdx++;
   }
   return SITE_COLORS[siteId];
+}
+
+function updateHeaderLegend() {
+  const legend = document.getElementById('header-legend');
+  const siteIds = Object.keys(siteStats);
+  if (siteIds.length === 0) return;
+  legend.innerHTML = siteIds.map(siteId => {
+    const s = siteStats[siteId];
+    const color = getSiteColor(siteId);
+    const label = s.cluster_name || siteId;
+    return `<div class="legend-item">
+      <div class="legend-dot" style="background:${color}"></div>
+      <span>${label}</span>
+    </div>`;
+  }).join('');
 }
 
 // State
@@ -485,22 +488,25 @@ function updateStats(elapsed_s) {
   const siteIds = Object.keys(siteStats);
   if (siteIds.length > 0) {
     container.innerHTML = '';
-    siteIds.forEach(siteId => {
+    siteIds.forEach((siteId, idx) => {
       const s = siteStats[siteId];
       const color = getSiteColor(siteId);
-      const isCloud = siteId.toLowerCase().includes('cloud') || siteId.toLowerCase().includes('slurm');
-      const icon = isCloud ? '&#9729;' : '&#9881;';
+      const name = s.cluster_name || siteId;
+      const scheduler = s.scheduler_type ? ` (${s.scheduler_type})` : '';
+      const siteLabel = `Site ${idx + 1}`;
+      const icon = '&#9900;'; // generic dot icon
       const avgMs = s.count > 0 ? Math.round(s.total_render_ms / s.count) : 0;
       container.innerHTML += `
         <div class="site-card">
           <div class="site-icon" style="background:${color}20; color:${color};">${icon}</div>
           <div class="site-info">
-            <div class="site-name">${siteId}</div>
-            <div class="site-detail">${avgMs}ms avg render</div>
+            <div class="site-name">${name}${scheduler}</div>
+            <div class="site-detail">${siteLabel} &middot; ${avgMs}ms avg render</div>
           </div>
           <div class="site-count" style="color:${color}">${s.count}</div>
         </div>`;
     });
+    updateHeaderLegend();
   }
 
   // Record throughput (only during live rendering, not late-join)

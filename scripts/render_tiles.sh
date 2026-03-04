@@ -2,21 +2,46 @@
 # render_tiles.sh — Render Mandelbrot tiles and POST them to the dashboard
 #
 # Environment variables:
-#   DASHBOARD_URL  - Base URL of dashboard (e.g., http://host:port)
-#   SITE_ID        - Identifier for this compute site
-#   TILE_START     - First tile index (inclusive)
-#   TILE_END       - Last tile index (exclusive)
-#   GRID_SIZE      - Grid dimension (e.g., 8 for 8x8)
-#   IMAGE_SIZE     - Tile resolution in pixels (e.g., 256)
-#   PALETTE        - Color palette (default: electric)
-#   NUM_WORKERS    - Number of parallel workers (default: auto-detect)
+#   DASHBOARD_URL   - Base URL of dashboard (e.g., http://host:port)
+#   SITE_ID         - Identifier for this compute site (e.g., site-1)
+#   TILE_START      - First tile index (inclusive)
+#   TILE_END        - Last tile index (exclusive)
+#   GRID_SIZE       - Grid dimension (e.g., 8 for 8x8)
+#   IMAGE_SIZE      - Tile resolution in pixels (e.g., 256)
+#   PALETTE         - Color palette (default: electric)
+#   CLUSTER_NAME    - PW cluster name (auto-discovered if empty)
+#   SCHEDULER_TYPE  - Scheduler type (e.g., ssh, slurm)
+#   NUM_WORKERS     - Number of parallel workers (default: auto-detect)
 
 set -e
+
+# Discover cluster name if not provided
+if [ -z "${CLUSTER_NAME}" ]; then
+    PW_CMD=""
+    for cmd in pw ~/pw/pw; do
+        command -v $cmd &>/dev/null && { PW_CMD=$cmd; break; }
+        [ -x "$cmd" ] && { PW_CMD=$cmd; break; }
+    done
+    if [ -n "${PW_CMD}" ]; then
+        # Find this resource's name from pw cluster list by matching hostname
+        MY_HOST=$(hostname)
+        CLUSTER_NAME=$(${PW_CMD} cluster list 2>/dev/null | awk '/^pw:\/\/'"${PW_USER}"'/ && /active/ {print $1}' | while IFS= read -r uri; do
+            name="${uri##*/}"
+            echo "${name}"
+        done | head -1)
+        # If we only found one match or hostname helps, use it
+        [ -z "${CLUSTER_NAME}" ] && CLUSTER_NAME="${MY_HOST}"
+    else
+        CLUSTER_NAME="$(hostname -s)"
+    fi
+fi
 
 echo "=========================================="
 echo "Tile Renderer Starting: $(date)"
 echo "=========================================="
 echo "Site:       ${SITE_ID}"
+echo "Cluster:    ${CLUSTER_NAME}"
+echo "Scheduler:  ${SCHEDULER_TYPE:-unknown}"
 echo "Dashboard:  ${DASHBOARD_URL}"
 echo "Tiles:      ${TILE_START} to ${TILE_END}"
 echo "Grid:       ${GRID_SIZE}x${GRID_SIZE}"
@@ -94,6 +119,8 @@ render_one() {
         --height "${IMAGE_SIZE}" \
         --palette "${PALETTE:-electric}" \
         --site-id "${SITE_ID}" \
+        --cluster-name "${CLUSTER_NAME}" \
+        --scheduler-type "${SCHEDULER_TYPE}" \
         --output "${tile_file}" \
     )
 
@@ -123,7 +150,7 @@ render_one() {
 }
 
 export -f render_one atomic_inc
-export PYTHON_CMD RENDERER GRID_SIZE IMAGE_SIZE PALETTE SITE_ID DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR
+export PYTHON_CMD RENDERER GRID_SIZE IMAGE_SIZE PALETTE SITE_ID CLUSTER_NAME SCHEDULER_TYPE DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR
 
 # Launch tiles across workers using xargs for parallel execution
 seq ${TILE_START} $((TILE_END - 1)) | xargs -P "${NUM_WORKERS}" -I{} bash -c 'render_one "$@"' _ {}
