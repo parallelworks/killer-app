@@ -60,16 +60,17 @@ ${PYTHON_CMD} -c "import fastapi" 2>/dev/null || {
 if [ -z "${service_port}" ] || [ "${service_port}" == "undefined" ]; then
     echo "Allocating port via pw agent..."
     # pw should be in PATH (injected by job_runner), fall back to ~/pw/pw
+    # Use 2>/dev/null to suppress upgrade notices that corrupt the port value
     if command -v pw &>/dev/null; then
-        service_port=$(pw agent open-port 2>&1)
+        service_port=$(pw agent open-port 2>/dev/null)
     elif [ -x "${HOME}/pw/pw" ]; then
-        service_port=$(~/pw/pw agent open-port 2>&1)
+        service_port=$(~/pw/pw agent open-port 2>/dev/null)
     else
         echo "[ERROR] pw CLI not found in PATH or ~/pw/pw"
         exit 1
     fi
-    if [ $? -ne 0 ] || [ -z "${service_port}" ]; then
-        echo "[ERROR] Failed to allocate port: ${service_port}"
+    if [ -z "${service_port}" ]; then
+        echo "[ERROR] Failed to allocate port"
         exit 1
     fi
 fi
