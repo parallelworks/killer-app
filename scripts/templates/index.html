@@ -223,14 +223,14 @@
 <div class="header">
   <h1><span>ACTIVATE</span> Multi-Site Burst Renderer</h1>
   <div class="header-right">
-    <div class="legend">
+    <div class="legend" id="header-legend">
       <div class="legend-item">
         <div class="legend-dot" style="background:var(--cloud)"></div>
-        <span id="cloud-label">Cloud (Slurm)</span>
+        <span>Cloud</span>
       </div>
       <div class="legend-item">
         <div class="legend-dot" style="background:var(--onprem)"></div>
-        <span id="onprem-label">On-Prem (SSH)</span>
+        <span>On-Prem</span>
       </div>
     </div>
     <div id="status-badge" class="status-badge waiting">
@@ -303,12 +303,20 @@
 
 <script>
 const SITE_COLORS = {};
-const COLOR_PALETTE = ['#3b82f6', '#f59e0b', '#22c55e', '#ef4444', '#a855f7', '#ec4899'];
-let colorIdx = 0;
+const EXTRA_COLORS = ['#22c55e', '#ef4444', '#a855f7', '#ec4899'];
+let extraColorIdx = 0;
 function getSiteColor(siteId) {
   if (!SITE_COLORS[siteId]) {
-    SITE_COLORS[siteId] = COLOR_PALETTE[colorIdx % COLOR_PALETTE.length];
-    colorIdx++;
+    // Assign colors based on site type, not arrival order
+    const id = siteId.toLowerCase();
+    if (id.includes('cloud') || id.includes('slurm')) {
+      SITE_COLORS[siteId] = '#3b82f6'; // blue = cloud (matches header legend)
+    } else if (id.includes('onprem') || id.includes('ssh')) {
+      SITE_COLORS[siteId] = '#f59e0b'; // orange = on-prem (matches header legend)
+    } else {
+      SITE_COLORS[siteId] = EXTRA_COLORS[extraColorIdx % EXTRA_COLORS.length];
+      extraColorIdx++;
+    }
   }
   return SITE_COLORS[siteId];
 }
