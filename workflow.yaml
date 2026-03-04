@@ -27,6 +27,7 @@ jobs:
             - scripts
 
   checkout_cloud:
+    needs: [checkout_onprem]
     steps:
       - name: Checkout scripts to cloud resource
         uses: parallelworks/checkout
