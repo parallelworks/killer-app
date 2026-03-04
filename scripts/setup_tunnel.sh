@@ -57,6 +57,7 @@ echo "SSH target: ${SSH_TARGET}"
 run_on_cloud() {
     ssh -i ~/.ssh/pwcli \
         -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
         -o ProxyCommand="pw ssh --proxy-command %h" \
         "${PW_USER}@${SSH_TARGET}" "$@"
 }
@@ -77,6 +78,7 @@ echo "${TUNNEL_PORT}" > "${JOB_DIR}/TUNNEL_PORT"
 echo "Establishing reverse SSH tunnel..."
 ssh -i ~/.ssh/pwcli \
     -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
     -o ExitOnForwardFailure=yes \
     -o ServerAliveInterval=15 \
     -o ProxyCommand="pw ssh --proxy-command %h" \
