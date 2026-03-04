@@ -15,25 +15,40 @@
 
 set -e
 
-# Discover cluster name if not provided
-if [ -z "${CLUSTER_NAME}" ]; then
-    PW_CMD=""
-    for cmd in pw ~/pw/pw; do
-        command -v $cmd &>/dev/null && { PW_CMD=$cmd; break; }
-        [ -x "$cmd" ] && { PW_CMD=$cmd; break; }
-    done
+# Discover cluster name and scheduler type if not provided
+PW_CMD=""
+for cmd in pw ~/pw/pw; do
+    command -v $cmd &>/dev/null && { PW_CMD=$cmd; break; }
+    [ -x "$cmd" ] && { PW_CMD=$cmd; break; }
+done
+
+if [ -z "${CLUSTER_NAME}" ] || [ -z "${SCHEDULER_TYPE}" ]; then
     if [ -n "${PW_CMD}" ]; then
-        # Find this resource's name from pw cluster list by matching hostname
-        MY_HOST=$(hostname)
-        CLUSTER_NAME=$(${PW_CMD} cluster list 2>/dev/null | awk '/^pw:\/\/'"${PW_USER}"'/ && /active/ {print $1}' | while IFS= read -r uri; do
+        # pw cluster list outputs: pw://user/name   status   type
+        # Match this host's hostname to find our cluster entry
+        MY_HOST=$(hostname -s)
+        while IFS= read -r line; do
+            uri=$(echo "$line" | awk '{print $1}')
+            ctype=$(echo "$line" | awk '{print $3}')
             name="${uri##*/}"
-            echo "${name}"
-        done | head -1)
-        # If we only found one match or hostname helps, use it
-        [ -z "${CLUSTER_NAME}" ] && CLUSTER_NAME="${MY_HOST}"
-    else
-        CLUSTER_NAME="$(hostname -s)"
+            # Match by hostname containing the cluster name (e.g., matthewshaxted-googlerockyv3-00099-mgmt)
+            if echo "${MY_HOST}" | grep -qi "${name}"; then
+                [ -z "${CLUSTER_NAME}" ] && CLUSTER_NAME="${name}"
+                if [ -z "${SCHEDULER_TYPE}" ]; then
+                    # Derive scheduler from cluster type (e.g., google-slurm -> slurm, existing -> ssh)
+                    case "${ctype}" in
+                        *slurm*) SCHEDULER_TYPE="slurm" ;;
+                        *pbs*)   SCHEDULER_TYPE="pbs" ;;
+                        existing) SCHEDULER_TYPE="ssh" ;;
+                        *)       SCHEDULER_TYPE="${ctype}" ;;
+                    esac
+                fi
+                break
+            fi
+        done < <(${PW_CMD} cluster list 2>/dev/null | grep "^pw://${PW_USER}/" | grep "active")
     fi
+    [ -z "${CLUSTER_NAME}" ] && CLUSTER_NAME="$(hostname -s)"
+    [ -z "${SCHEDULER_TYPE}" ] && SCHEDULER_TYPE="ssh"
 fi
 
 echo "=========================================="
