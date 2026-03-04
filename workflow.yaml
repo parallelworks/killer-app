@@ -216,7 +216,7 @@ jobs:
             -o ServerAliveInterval=15 \
             -o ProxyCommand="pw ssh --proxy-command %h" \
             -R ${TUNNEL_PORT}:localhost:${DASHBOARD_PORT} \
-            -N ${USER}@${CLOUD_RESOURCE} &
+            -N ${PW_USER}@${CLOUD_RESOURCE} &
           TUNNEL_PID=$!
           sleep 2
 
