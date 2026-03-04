@@ -176,7 +176,6 @@ jobs:
       remoteHost: ${{ inputs.onprem_resource.ip }}
     steps:
       - name: Render tiles (on-prem)
-        early-cancel: any-job-failed
         run: |
           set -e
           export DASHBOARD_URL="${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}"
@@ -200,39 +199,9 @@ jobs:
       - name: Create reverse tunnel to cloud
         run: |
           set -e
-          JOB_DIR="${PW_PARENT_JOB_DIR%/}"
-          DASHBOARD_PORT=$(cat "${JOB_DIR}/SESSION_PORT")
-          CLOUD_RESOURCE="${{ inputs.cloud_resource.name }}"
-
-          # Allocate a port on the cloud side for the tunnel
-          TUNNEL_PORT=$(pw ssh "${CLOUD_RESOURCE}" 'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
-          echo "Tunnel port on cloud: ${TUNNEL_PORT}"
-          echo "${TUNNEL_PORT}" > "${JOB_DIR}/TUNNEL_PORT"
-
-          # Start reverse SSH tunnel: cloud:TUNNEL_PORT -> onprem:DASHBOARD_PORT
-          ssh -i ~/.ssh/pwcli \
-            -o StrictHostKeyChecking=no \
-            -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=15 \
-            -o ProxyCommand="pw ssh --proxy-command %h" \
-            -R ${TUNNEL_PORT}:localhost:${DASHBOARD_PORT} \
-            -N ${PW_USER}@${CLOUD_RESOURCE} &
-          TUNNEL_PID=$!
-          sleep 2
-
-          if kill -0 ${TUNNEL_PID} 2>/dev/null; then
-            echo "Reverse tunnel established (PID ${TUNNEL_PID})"
-            echo "TUNNEL_PORT=${TUNNEL_PORT}" >> "${OUTPUTS}"
-
-            # Keep tunnel alive until render completes
-            while kill -0 ${TUNNEL_PID} 2>/dev/null; do
-              sleep 5
-            done
-            echo "Tunnel closed"
-          else
-            echo "[ERROR] Failed to establish tunnel"
-            exit 1
-          fi
+          export CLOUD_RESOURCE="${{ inputs.cloud_resource.name }}"
+          export DASHBOARD_PORT=$(cat "${PW_PARENT_JOB_DIR}/SESSION_PORT")
+          bash scripts/setup_tunnel.sh
 
   # =============================================================================
   # WAIT FOR TUNNEL — Poll for tunnel coordination file
