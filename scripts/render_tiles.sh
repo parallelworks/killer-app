@@ -9,6 +9,7 @@
 #   GRID_SIZE      - Grid dimension (e.g., 8 for 8x8)
 #   IMAGE_SIZE     - Tile resolution in pixels (e.g., 256)
 #   PALETTE        - Color palette (default: electric)
+#   NUM_WORKERS    - Number of parallel workers (default: auto-detect)
 
 set -e
 
@@ -45,19 +46,46 @@ fi
 WORK_DIR=$(mktemp -d)
 trap "rm -rf ${WORK_DIR}" EXIT
 
-echo "Work dir: ${WORK_DIR}"
+# Determine number of workers
+if [ -z "${NUM_WORKERS}" ]; then
+    NUM_WORKERS=$(nproc 2>/dev/null || echo 4)
+    # Cap at number of tiles to avoid idle workers
+    TOTAL=$((TILE_END - TILE_START))
+    [ "${NUM_WORKERS}" -gt "${TOTAL}" ] && NUM_WORKERS=${TOTAL}
+    # Cap at a reasonable max
+    [ "${NUM_WORKERS}" -gt 16 ] && NUM_WORKERS=16
+fi
+
+echo "Workers:    ${NUM_WORKERS}"
+echo "Work dir:   ${WORK_DIR}"
 echo ""
 
 TOTAL=$((TILE_END - TILE_START))
-COUNT=0
-ERRORS=0
 
-for idx in $(seq ${TILE_START} $((TILE_END - 1))); do
-    tile_x=$((idx % GRID_SIZE))
-    tile_y=$((idx / GRID_SIZE))
-    tile_file="${WORK_DIR}/tile_${tile_x}_${tile_y}.png"
+# Shared counters via files
+echo "0" > "${WORK_DIR}/completed"
+echo "0" > "${WORK_DIR}/errors"
+LOCK_DIR="${WORK_DIR}/lock"
+
+# Atomic increment helper
+atomic_inc() {
+    local file="$1"
+    while ! mkdir "${LOCK_DIR}" 2>/dev/null; do :; done
+    local val=$(cat "$file")
+    echo $((val + 1)) > "$file"
+    echo $((val + 1))
+    rmdir "${LOCK_DIR}"
+}
+
+# Worker function: render and POST a single tile
+render_one() {
+    local idx=$1
+    local tile_x=$((idx % GRID_SIZE))
+    local tile_y=$((idx / GRID_SIZE))
+    local tile_file="${WORK_DIR}/tile_${tile_x}_${tile_y}.png"
 
     # Render tile
+    local META
     META=$(${PYTHON_CMD} "${RENDERER}" \
         --tile-x "${tile_x}" \
         --tile-y "${tile_y}" \
@@ -69,9 +97,8 @@ for idx in $(seq ${TILE_START} $((TILE_END - 1))); do
         --output "${tile_file}" \
     )
 
-    COUNT=$((COUNT + 1))
-
     # POST tile to dashboard
+    local HTTP_CODE
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST "${DASHBOARD_URL}/api/tile" \
         -F "tile=@${tile_file}" \
@@ -80,20 +107,34 @@ for idx in $(seq ${TILE_START} $((TILE_END - 1))); do
         --max-time 30 \
     ) || HTTP_CODE="000"
 
+    local count
+    count=$(atomic_inc "${WORK_DIR}/completed")
+
     if [ "${HTTP_CODE}" = "200" ]; then
-        echo "[${COUNT}/${TOTAL}] Tile (${tile_x},${tile_y}) -> OK ($(echo "${META}" | ${PYTHON_CMD} -c 'import sys,json;print(json.load(sys.stdin)["render_time_ms"])' 2>/dev/null || echo '?')ms)"
+        local render_ms
+        render_ms=$(echo "${META}" | ${PYTHON_CMD} -c 'import sys,json;print(json.load(sys.stdin)["render_time_ms"])' 2>/dev/null || echo '?')
+        echo "[${count}/${TOTAL}] Tile (${tile_x},${tile_y}) -> OK (${render_ms}ms)"
     else
-        ERRORS=$((ERRORS + 1))
-        echo "[${COUNT}/${TOTAL}] Tile (${tile_x},${tile_y}) -> FAILED (HTTP ${HTTP_CODE})"
+        atomic_inc "${WORK_DIR}/errors" > /dev/null
+        echo "[${count}/${TOTAL}] Tile (${tile_x},${tile_y}) -> FAILED (HTTP ${HTTP_CODE})"
     fi
 
-    # Clean up tile file
     rm -f "${tile_file}"
-done
+}
+
+export -f render_one atomic_inc
+export PYTHON_CMD RENDERER GRID_SIZE IMAGE_SIZE PALETTE SITE_ID DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR
+
+# Launch tiles across workers using xargs for parallel execution
+seq ${TILE_START} $((TILE_END - 1)) | xargs -P "${NUM_WORKERS}" -I{} bash -c 'render_one "$@"' _ {}
+
+ERRORS=$(cat "${WORK_DIR}/errors")
+COMPLETED=$(cat "${WORK_DIR}/completed")
 
 echo ""
 echo "=========================================="
 echo "Rendering complete!"
-echo "  Tiles rendered: ${COUNT}"
+echo "  Tiles rendered: ${COMPLETED}"
+echo "  Workers: ${NUM_WORKERS}"
 echo "  Errors: ${ERRORS}"
 echo "=========================================="
