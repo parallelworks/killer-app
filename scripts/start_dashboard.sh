@@ -104,6 +104,7 @@ nohup ${PYTHON_CMD} -m uvicorn dashboard:app \
     --port "${service_port}" \
     --app-dir "${SCRIPT_DIR}" \
     > logs/dashboard.log 2>&1 &
+disown
 SERVER_PID=$!
 
 echo "Dashboard PID: ${SERVER_PID}"
@@ -115,12 +116,6 @@ if kill -0 ${SERVER_PID} 2>/dev/null; then
     echo "=========================================="
     echo "Dashboard is RUNNING on port ${service_port}"
     echo "=========================================="
-
-    # Keep alive
-    while kill -0 ${SERVER_PID} 2>/dev/null; do
-        sleep 5
-    done
-    echo "Dashboard process exited"
 else
     echo "[ERROR] Dashboard failed to start"
     cat logs/dashboard.log >&2
