@@ -505,7 +505,9 @@ function updateStats(elapsed_s) {
 // WebSocket connection
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+  // Handle session proxy: use pathname as base for WebSocket and API calls
+  const basePath = location.pathname.replace(/\/$/, '');
+  const ws = new WebSocket(proto + '//' + location.host + basePath + '/ws');
 
   ws.onopen = () => console.log('WS connected');
 
@@ -520,7 +522,7 @@ function connect() {
       resizeCanvas();
       // Fetch full state for late-join
       if (completedTiles > 0) {
-        fetch('/api/state').then(r => r.json()).then(data => {
+        fetch(basePath + '/api/state').then(r => r.json()).then(data => {
           for (const key in data.tiles) {
             const [tx, ty] = key.split(',').map(Number);
             const t = data.tiles[key];

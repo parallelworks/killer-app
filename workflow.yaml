@@ -54,19 +54,9 @@ jobs:
           bash setup.sh
 
       - name: Launch dashboard
-        early-cancel: any-job-failed
-        uses: marketplace/job_runner/v4.0
-        with:
-          resource: ${{ inputs.onprem_resource }}
-          rundir: "${PW_PARENT_JOB_DIR}"
-          scheduler: false
-          inject_markers: true
-          use_existing_script: true
-          script_path: "${PW_PARENT_JOB_DIR}/scripts/start_dashboard.sh"
-
-      - name: Notify job ended
-        early-cancel: any-job-failed
-        run: touch job.ended
+        run: |
+          set -e
+          bash scripts/start_dashboard.sh
 
   # =============================================================================
   # WAIT FOR DASHBOARD — Poll for coordination files
