@@ -32,8 +32,8 @@ if [ -z "${PYTHON_CMD}" ]; then
     exit 1
 fi
 
-# Get script directory (where renderer.py lives)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Script directory — checkout places scripts under $PW_PARENT_JOB_DIR/scripts/
+SCRIPT_DIR="${PW_PARENT_JOB_DIR%/}/scripts"
 RENDERER="${SCRIPT_DIR}/renderer.py"
 
 if [ ! -f "${RENDERER}" ]; then

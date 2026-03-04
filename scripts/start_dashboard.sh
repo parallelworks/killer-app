@@ -17,9 +17,19 @@ echo "Job dir:  ${PW_PARENT_JOB_DIR}"
 JOB_DIR="${PW_PARENT_JOB_DIR%/}"
 cd "${JOB_DIR}"
 
-# Get script directory (where dashboard.py lives)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Script directory — checkout places scripts under $JOB_DIR/scripts/
+SCRIPT_DIR="${JOB_DIR}/scripts"
 echo "Script dir: ${SCRIPT_DIR}"
+
+# Verify scripts were checked out
+if [ ! -f "${SCRIPT_DIR}/dashboard.py" ]; then
+    echo "[ERROR] dashboard.py not found at ${SCRIPT_DIR}/dashboard.py"
+    echo "[DEBUG] Contents of JOB_DIR:"
+    ls -la "${JOB_DIR}" 2>&1
+    echo "[DEBUG] Looking for scripts..."
+    find "${JOB_DIR}" -name "dashboard.py" 2>/dev/null || echo "Not found anywhere"
+    exit 1
+fi
 
 # =============================================================================
 # Install dependencies
