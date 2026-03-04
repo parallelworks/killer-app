@@ -49,8 +49,14 @@ echo "Python: ${PYTHON_CMD}"
 ${PYTHON_CMD} -c "import fastapi" 2>/dev/null || {
     echo "Installing fastapi, uvicorn, python-multipart..."
     ${PYTHON_CMD} -m pip install --user --quiet fastapi uvicorn python-multipart 2>&1 || {
-        echo "[ERROR] Failed to install dependencies"
-        exit 1
+        echo "pip --user failed (PEP 668?), trying virtual environment..."
+        VENV_DIR="${JOB_DIR}/.venv"
+        ${PYTHON_CMD} -m venv "${VENV_DIR}"
+        PYTHON_CMD="${VENV_DIR}/bin/python"
+        ${PYTHON_CMD} -m pip install --quiet fastapi uvicorn python-multipart 2>&1 || {
+            echo "[ERROR] Failed to install dependencies"
+            exit 1
+        }
     }
 }
 
