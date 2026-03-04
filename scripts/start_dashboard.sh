@@ -116,6 +116,14 @@ if kill -0 ${SERVER_PID} 2>/dev/null; then
     echo "=========================================="
     echo "Dashboard is RUNNING on port ${service_port}"
     echo "=========================================="
+
+    # Keep this script (and the SSH session / compute job) alive
+    # so the dashboard process persists and the session proxy stays valid.
+    # Cancel the workflow to shut down.
+    while kill -0 ${SERVER_PID} 2>/dev/null; do
+        sleep 5
+    done
+    echo "Dashboard process exited"
 else
     echo "[ERROR] Dashboard failed to start"
     cat logs/dashboard.log >&2
