@@ -103,7 +103,11 @@ async def receive_tile(
 
     # Update site stats
     if site_id not in state["site_stats"]:
-        state["site_stats"][site_id] = {"count": 0, "total_render_ms": 0, "first_ts": now}
+        state["site_stats"][site_id] = {
+            "count": 0, "total_render_ms": 0, "first_ts": now,
+            "cluster_name": meta.get("cluster_name", ""),
+            "scheduler_type": meta.get("scheduler_type", ""),
+        }
     stats = state["site_stats"][site_id]
     stats["count"] += 1
     stats["total_render_ms"] += meta.get("render_time_ms", 0)

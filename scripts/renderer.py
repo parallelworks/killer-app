@@ -121,6 +121,8 @@ def main():
     parser.add_argument("--palette", default="electric", choices=list(PALETTES.keys()))
     parser.add_argument("--output", default="tile.png")
     parser.add_argument("--site-id", default="unknown")
+    parser.add_argument("--cluster-name", default="")
+    parser.add_argument("--scheduler-type", default="")
     args = parser.parse_args()
 
     t0 = time.time()
@@ -145,6 +147,8 @@ def main():
         "height": args.height,
         "render_time_ms": round(elapsed_ms, 1),
         "site_id": args.site_id,
+        "cluster_name": args.cluster_name,
+        "scheduler_type": args.scheduler_type,
         "palette": args.palette,
     }
     print(json.dumps(meta))

@@ -180,7 +180,8 @@ jobs:
         run: |
           set -e
           export DASHBOARD_URL="${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}"
-          export SITE_ID="onprem-ssh"
+          export SITE_ID="site-1"
+          export SCHEDULER_TYPE="ssh"
           export TILE_START=0
           export TILE_END="${{ needs.configure_dashboard.outputs.HALF_TILES }}"
           export GRID_SIZE="${{ inputs.render_settings.grid_size }}"
@@ -260,7 +261,8 @@ jobs:
             echo "Direct URL unreachable, using tunnel: ${DASHBOARD_URL}"
           fi
 
-          export SITE_ID="cloud-slurm"
+          export SITE_ID="site-2"
+          export SCHEDULER_TYPE="slurm"
           export TILE_START="${{ needs.configure_dashboard.outputs.HALF_TILES }}"
           export TILE_END="${{ needs.configure_dashboard.outputs.TOTAL_TILES }}"
           export GRID_SIZE="${{ inputs.render_settings.grid_size }}"
