@@ -70,13 +70,28 @@
     justify-content: center;
     padding: 2rem;
     position: relative;
+    overflow: hidden;
   }
   #fractal-canvas {
     border: 1px solid var(--border);
     border-radius: 8px;
     image-rendering: pixelated;
-    max-width: 100%;
-    max-height: 100%;
+    cursor: grab;
+  }
+  #fractal-canvas:active { cursor: grabbing; }
+  .zoom-hint {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--dim);
+    background: var(--panel);
+    padding: 0.3rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    pointer-events: none;
+    opacity: 0.7;
   }
   .sidebar {
     border-left: 1px solid var(--border);
@@ -239,6 +254,7 @@
 <div class="main">
   <div class="canvas-area">
     <canvas id="fractal-canvas"></canvas>
+    <div class="zoom-hint">Scroll to zoom &middot; Drag to pan &middot; Double-click to reset</div>
   </div>
   <div class="sidebar">
     <!-- Progress -->
@@ -336,51 +352,137 @@ const throughputHistory = []; // [{ts, total, perSite}]
 let lastThroughputCheck = null;
 let lastTileCounts = {}; // per-site counts at last check
 
-// Canvas setup
+// Canvas setup — offscreen canvas holds full-res fractal, visible canvas shows zoomed view
 const canvas = document.getElementById('fractal-canvas');
 const ctx = canvas.getContext('2d');
 
-function resizeCanvas() {
-  const tilePixels = Math.min(
-    Math.floor((window.innerHeight - 100) / gridSize),
-    Math.floor((window.innerWidth - 380) / gridSize),
-    128
-  );
-  canvas.width = gridSize * tilePixels;
-  canvas.height = gridSize * tilePixels;
-  // Redraw all existing tiles
-  ctx.fillStyle = '#0a0e17';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+// Offscreen canvas for full-res tile compositing
+let offscreen = null;
+let offCtx = null;
+let tilePixels = 128;
+
+// Zoom/pan state
+let zoom = 1;
+let panX = 0, panY = 0;
+let isDragging = false;
+let dragStartX = 0, dragStartY = 0;
+let panStartX = 0, panStartY = 0;
+
+function initOffscreen() {
+  tilePixels = imageSize; // Full resolution per tile
+  offscreen = document.createElement('canvas');
+  offscreen.width = gridSize * tilePixels;
+  offscreen.height = gridSize * tilePixels;
+  offCtx = offscreen.getContext('2d');
+  offCtx.fillStyle = '#0a0e17';
+  offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
   // Draw grid
-  ctx.strokeStyle = '#1e2a3a';
-  ctx.lineWidth = 0.5;
+  offCtx.strokeStyle = '#1e2a3a';
+  offCtx.lineWidth = 1;
   for (let i = 0; i <= gridSize; i++) {
     const x = i * tilePixels;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, x); ctx.lineTo(canvas.width, x); ctx.stroke();
-  }
-  // Redraw tiles
-  for (const key in tileData) {
-    const d = tileData[key];
-    drawTile(d.tile_x, d.tile_y, d.png_b64, d.site_id, tilePixels);
+    offCtx.beginPath(); offCtx.moveTo(x, 0); offCtx.lineTo(x, offscreen.height); offCtx.stroke();
+    offCtx.beginPath(); offCtx.moveTo(0, x); offCtx.lineTo(offscreen.width, x); offCtx.stroke();
   }
 }
 
-function drawTile(tx, ty, png_b64, siteId, tilePixels) {
-  if (!tilePixels) tilePixels = canvas.width / gridSize;
+function resizeCanvas() {
+  if (!offscreen) initOffscreen();
+  // Fit canvas to available space
+  const area = canvas.parentElement;
+  const maxW = area.clientWidth - 64;
+  const maxH = area.clientHeight - 64;
+  const fitSize = Math.min(maxW, maxH, gridSize * 128);
+  canvas.width = fitSize;
+  canvas.height = fitSize;
+  // Redraw offscreen tiles
+  if (offscreen.width !== gridSize * tilePixels) initOffscreen();
+  offCtx.fillStyle = '#0a0e17';
+  offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
+  // Grid
+  offCtx.strokeStyle = '#1e2a3a';
+  offCtx.lineWidth = 1;
+  for (let i = 0; i <= gridSize; i++) {
+    const x = i * tilePixels;
+    offCtx.beginPath(); offCtx.moveTo(x, 0); offCtx.lineTo(x, offscreen.height); offCtx.stroke();
+    offCtx.beginPath(); offCtx.moveTo(0, x); offCtx.lineTo(offscreen.width, x); offCtx.stroke();
+  }
+  // Redraw all tiles to offscreen
+  for (const key in tileData) {
+    const d = tileData[key];
+    drawTileToOffscreen(d.tile_x, d.tile_y, d.png_b64, d.site_id);
+  }
+  renderView();
+}
+
+function drawTileToOffscreen(tx, ty, png_b64, siteId) {
   const img = new Image();
   img.onload = () => {
     const x = tx * tilePixels;
     const y = ty * tilePixels;
-    ctx.drawImage(img, x, y, tilePixels, tilePixels);
-    // Border showing site
+    offCtx.drawImage(img, x, y, tilePixels, tilePixels);
+    // Border showing site color
     const color = getSiteColor(siteId);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 1, y + 1, tilePixels - 2, tilePixels - 2);
+    offCtx.strokeStyle = color;
+    offCtx.lineWidth = Math.max(2, tilePixels / 64);
+    offCtx.strokeRect(x + 1, y + 1, tilePixels - 2, tilePixels - 2);
+    renderView();
   };
   img.src = 'data:image/png;base64,' + png_b64;
 }
+
+function renderView() {
+  ctx.fillStyle = '#0a0e17';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(canvas.width / 2 + panX, canvas.height / 2 + panY);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-offscreen.width / 2, -offscreen.height / 2);
+  ctx.imageSmoothingEnabled = zoom < 1;
+  ctx.drawImage(offscreen, 0, 0);
+  ctx.restore();
+}
+
+function drawTile(tx, ty, png_b64, siteId) {
+  if (!offscreen) initOffscreen();
+  drawTileToOffscreen(tx, ty, png_b64, siteId);
+}
+
+// Zoom with scroll wheel (zoom toward cursor)
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left - canvas.width / 2 - panX;
+  const my = e.clientY - rect.top - canvas.height / 2 - panY;
+  panX -= mx * (zoomFactor - 1);
+  panY -= my * (zoomFactor - 1);
+  zoom *= zoomFactor;
+  zoom = Math.max(0.1, Math.min(zoom, 20));
+  renderView();
+}, { passive: false });
+
+// Pan with drag
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  panStartX = panX;
+  panStartY = panY;
+});
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  panX = panStartX + (e.clientX - dragStartX);
+  panY = panStartY + (e.clientY - dragStartY);
+  renderView();
+});
+window.addEventListener('mouseup', () => { isDragging = false; });
+
+// Double-click to reset zoom
+canvas.addEventListener('dblclick', () => {
+  zoom = 1; panX = 0; panY = 0;
+  renderView();
+});
 
 // Throughput chart
 const tCanvas = document.getElementById('throughput-canvas');
