@@ -200,8 +200,8 @@ jobs:
       - name: Create reverse tunnel to cloud
         run: |
           set -e
-          export CLOUD_RESOURCE="${{ inputs.cloud_resource.name }}"
-          export CLOUD_RESOURCE_URI="${{ inputs.cloud_resource }}"
+          export CLOUD_RESOURCE_NAME="${{ inputs.cloud_resource.name }}"
+          export CLOUD_RESOURCE_IP="${{ inputs.cloud_resource.ip }}"
           export DASHBOARD_PORT=${{ needs.configure_dashboard.outputs.DASHBOARD_PORT }}
           bash scripts/setup_tunnel.sh
 
