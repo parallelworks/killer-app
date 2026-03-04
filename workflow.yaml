@@ -190,10 +190,81 @@ jobs:
           bash scripts/render_tiles.sh
 
   # =============================================================================
+  # TUNNEL — Reverse SSH tunnel from on-prem to cloud for dashboard access
+  # =============================================================================
+  setup_tunnel:
+    needs: [configure_dashboard, checkout_cloud]
+    ssh:
+      remoteHost: ${{ inputs.onprem_resource.ip }}
+    steps:
+      - name: Create reverse tunnel to cloud
+        run: |
+          set -e
+          JOB_DIR="${PW_PARENT_JOB_DIR%/}"
+          DASHBOARD_PORT=$(cat "${JOB_DIR}/SESSION_PORT")
+          CLOUD_RESOURCE="${{ inputs.cloud_resource.name }}"
+
+          # Allocate a port on the cloud side for the tunnel
+          TUNNEL_PORT=$(pw ssh "${CLOUD_RESOURCE}" 'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
+          echo "Tunnel port on cloud: ${TUNNEL_PORT}"
+          echo "${TUNNEL_PORT}" > "${JOB_DIR}/TUNNEL_PORT"
+
+          # Start reverse SSH tunnel: cloud:TUNNEL_PORT -> onprem:DASHBOARD_PORT
+          ssh -i ~/.ssh/pwcli \
+            -o StrictHostKeyChecking=no \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=15 \
+            -o ProxyCommand="pw ssh --proxy-command %h" \
+            -R ${TUNNEL_PORT}:localhost:${DASHBOARD_PORT} \
+            -N ${USER}@${CLOUD_RESOURCE} &
+          TUNNEL_PID=$!
+          sleep 2
+
+          if kill -0 ${TUNNEL_PID} 2>/dev/null; then
+            echo "Reverse tunnel established (PID ${TUNNEL_PID})"
+            echo "TUNNEL_PORT=${TUNNEL_PORT}" >> "${OUTPUTS}"
+
+            # Keep tunnel alive until render completes
+            while kill -0 ${TUNNEL_PID} 2>/dev/null; do
+              sleep 5
+            done
+            echo "Tunnel closed"
+          else
+            echo "[ERROR] Failed to establish tunnel"
+            exit 1
+          fi
+
+  # =============================================================================
+  # WAIT FOR TUNNEL — Poll for tunnel coordination file
+  # =============================================================================
+  wait_for_tunnel:
+    needs: [configure_dashboard]
+    ssh:
+      remoteHost: ${{ inputs.onprem_resource.ip }}
+    steps:
+      - name: Wait for tunnel ready
+        early-cancel: any-job-failed
+        run: |
+          set -e
+          JOB_DIR="${PW_PARENT_JOB_DIR%/}"
+
+          echo "Waiting for tunnel..."
+          attempt=1
+          while [ ! -f "${JOB_DIR}/TUNNEL_PORT" ]; do
+            echo "[${attempt}/60] Waiting for TUNNEL_PORT..."
+            sleep 2
+            ((attempt++))
+            [ ${attempt} -gt 60 ] && { echo "ERROR: Tunnel timeout"; exit 1; }
+          done
+          TUNNEL_PORT=$(cat "${JOB_DIR}/TUNNEL_PORT")
+          echo "Tunnel port: ${TUNNEL_PORT}"
+          echo "TUNNEL_PORT=${TUNNEL_PORT}" >> "${OUTPUTS}"
+
+  # =============================================================================
   # RENDER CLOUD — Render second half of tiles on cloud resource
   # =============================================================================
   render_cloud:
-    needs: [configure_dashboard, checkout_cloud]
+    needs: [configure_dashboard, checkout_cloud, wait_for_tunnel]
     ssh:
       remoteHost: ${{ inputs.cloud_resource.ip }}
     steps:
@@ -207,7 +278,7 @@ jobs:
         early-cancel: any-job-failed
         run: |
           set -e
-          export DASHBOARD_URL="${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}"
+          export DASHBOARD_URL="http://localhost:${{ needs.wait_for_tunnel.outputs.TUNNEL_PORT }}"
           export SITE_ID="cloud-slurm"
           export TILE_START="${{ needs.configure_dashboard.outputs.HALF_TILES }}"
           export TILE_END="${{ needs.configure_dashboard.outputs.TOTAL_TILES }}"
