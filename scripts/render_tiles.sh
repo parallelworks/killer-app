@@ -166,7 +166,7 @@ render_one() {
 }
 
 export -f render_one atomic_inc
-export PYTHON_CMD RENDERER GRID_SIZE IMAGE_SIZE PALETTE SITE_ID CLUSTER_NAME SCHEDULER_TYPE DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR
+export PYTHON_CMD RENDERER GRID_SIZE IMAGE_SIZE PALETTE SITE_ID CLUSTER_NAME SCHEDULER_TYPE DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR NUM_WORKERS
 
 # Launch tiles across workers using xargs for parallel execution
 seq ${TILE_START} $((TILE_END - 1)) | xargs -P "${NUM_WORKERS}" -I{} bash -c 'render_one "$@"' _ {}
