@@ -206,6 +206,8 @@ jobs:
       targets:
         type: list
         label: Compute Sites
+        min: 1
+        tooltip: Add one or more compute sites. The first site hosts the live dashboard and renders tiles. Additional sites render tiles in parallel.
         template:
           resource:
             label: Resource
