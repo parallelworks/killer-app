@@ -16,12 +16,12 @@
     --accent: #22d3ee;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
+  html, body {
     font-family: 'Inter', -apple-system, system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
-    overflow-x: hidden;
+    height: 100vh;
+    overflow: hidden;
   }
   .header {
     padding: 1.2rem 2rem;
@@ -58,13 +58,95 @@
     height: 10px;
     border-radius: 50%;
   }
+
+  /* Tabs */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    padding: 0 2rem;
+  }
+  .tab-btn {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--dim);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+    font-family: inherit;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-btn.hidden { display: none; }
+
   .main {
     display: grid;
     grid-template-columns: 1fr 320px;
     gap: 0;
-    height: calc(100vh - 60px);
+    height: calc(100vh - 100px);
+    overflow: hidden;
   }
-  .canvas-area {
+  .main > * {
+    min-height: 0;
+  }
+  .main.no-sidebar {
+    grid-template-columns: 1fr;
+  }
+
+  /* Cluster view */
+  .cluster-view {
+    display: grid;
+    grid-template-rows: 3fr 2fr;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    overflow: hidden;
+  }
+  .cluster-view .chart-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .chart-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .chart-card .card-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    margin-bottom: 0.4rem;
+    flex-shrink: 0;
+  }
+  .chart-card .chart-body {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .chart-card canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Fractal view */
+  .fractal-view {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -93,6 +175,28 @@
     pointer-events: none;
     opacity: 0.7;
   }
+
+  /* Ray view */
+  .ray-view {
+    width: 100%;
+    height: 100%;
+  }
+  .ray-view iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--bg);
+  }
+  .ray-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: var(--dim);
+    font-size: 0.9rem;
+  }
+
   .sidebar {
     border-left: 1px solid var(--border);
     padding: 1.5rem;
@@ -197,7 +301,7 @@
     height: 100px;
     position: relative;
   }
-  #throughput-canvas {
+  #throughput-mini-canvas {
     width: 100%;
     height: 100%;
   }
@@ -232,6 +336,8 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
   }
+
+  .view-hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -251,15 +357,57 @@
   </div>
 </div>
 
-<div class="main">
-  <div class="canvas-area">
+<div class="tab-bar">
+  <button id="tab-cluster" class="tab-btn active" onclick="switchTab('cluster')">Cluster</button>
+  <button id="tab-fractal" class="tab-btn hidden" onclick="switchTab('fractal')">Fractal</button>
+  <button id="tab-ray" class="tab-btn" onclick="switchTab('ray')">Ray Dashboard</button>
+</div>
+
+<div id="main-container" class="main">
+  <!-- Cluster view (main area) -->
+  <div id="cluster-view" class="cluster-view">
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="card-title">Cluster Topology</div>
+        <div class="chart-body">
+          <canvas id="topology-canvas"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="card-title" id="placement-title">Tile Placement by Site</div>
+        <div class="chart-body">
+          <canvas id="placement-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card" style="grid-column: 1 / -1;">
+        <div class="card-title" id="throughput-title">Throughput (tiles/sec)</div>
+        <div class="chart-body">
+          <canvas id="throughput-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fractal view (main area) -->
+  <div id="fractal-view" class="fractal-view view-hidden">
     <canvas id="fractal-canvas"></canvas>
     <div class="zoom-hint">Scroll to zoom &middot; Drag to pan &middot; Double-click to reset</div>
   </div>
-  <div class="sidebar">
+
+  <!-- Ray Dashboard view (main area) -->
+  <div id="ray-view" class="ray-view view-hidden">
+    <div class="ray-placeholder" id="ray-placeholder">
+      Ray Dashboard — Connect when Ray head node is available
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div id="sidebar" class="sidebar">
     <!-- Progress -->
     <div class="card">
-      <div class="card-title">Progress</div>
+      <div class="card-title" id="progress-title">Progress</div>
       <div class="progress-bar-outer">
         <div id="progress-bar" class="progress-bar-inner" style="width:0%"></div>
         <div id="progress-label" class="progress-label">0 / 0 tiles</div>
@@ -268,7 +416,7 @@
 
     <!-- Stats -->
     <div class="card">
-      <div class="card-title">Statistics</div>
+      <div class="card-title">Cluster Statistics</div>
       <div class="stat-grid">
         <div class="stat">
           <div class="stat-value" id="stat-elapsed">0s</div>
@@ -276,15 +424,15 @@
         </div>
         <div class="stat">
           <div class="stat-value" id="stat-tps">0</div>
-          <div class="stat-label">Tiles/sec</div>
+          <div class="stat-label" id="stat-tps-label">Tiles/sec</div>
         </div>
         <div class="stat">
           <div class="stat-value" id="stat-avg-ms">0</div>
-          <div class="stat-label">Avg ms/tile</div>
+          <div class="stat-label" id="stat-avg-label">Avg ms/tile</div>
         </div>
         <div class="stat">
           <div class="stat-value" id="stat-total">0</div>
-          <div class="stat-label">Total Tiles</div>
+          <div class="stat-label" id="stat-total-label">Total Tiles</div>
         </div>
       </div>
     </div>
@@ -303,11 +451,11 @@
       </div>
     </div>
 
-    <!-- Throughput -->
-    <div class="card">
-      <div class="card-title">Throughput (tiles/sec)</div>
+    <!-- Throughput Mini -->
+    <div class="card" id="throughput-mini-card">
+      <div class="card-title" id="throughput-mini-title">Throughput (tiles/sec)</div>
       <div class="throughput-chart">
-        <canvas id="throughput-canvas"></canvas>
+        <canvas id="throughput-mini-canvas"></canvas>
       </div>
     </div>
   </div>
@@ -348,11 +496,13 @@ let completedTiles = 0;
 let startTime = null;
 const tileData = {};
 const siteStats = {};
-const throughputHistory = []; // [{ts, total, perSite}]
+const throughputHistory = [];
 let lastThroughputCheck = null;
-let lastTileCounts = {}; // per-site counts at last check
+let lastTileCounts = {};
+let workloadType = 'fractal'; // always fractal for this dashboard
+let activeTab = 'cluster';
 
-// Canvas setup — offscreen canvas holds full-res fractal, visible canvas shows zoomed view
+// Fractal canvas setup
 const canvas = document.getElementById('fractal-canvas');
 const ctx = canvas.getContext('2d');
 
@@ -362,23 +512,74 @@ let offCtx = null;
 let tilePixels = 128;
 
 // Zoom/pan state
-let zoom = null;  // null = not yet set, will auto-fit
+let zoom = null;
 let panX = 0, panY = 0;
-let fitZoom = 1; // Zoom level that fits entire fractal in view
-let userHasZoomed = false; // Track whether user has manually zoomed/panned
+let fitZoom = 1;
+let userHasZoomed = false;
 let isDragging = false;
 let dragStartX = 0, dragStartY = 0;
 let panStartX = 0, panStartY = 0;
 
+// --- Tab switching ---
+function switchTab(tab) {
+  activeTab = tab;
+  const clusterView = document.getElementById('cluster-view');
+  const fractalView = document.getElementById('fractal-view');
+  const rayView = document.getElementById('ray-view');
+  const sidebar = document.getElementById('sidebar');
+  const mainContainer = document.getElementById('main-container');
+  const throughputMini = document.getElementById('throughput-mini-card');
+
+  // Tab button states
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+
+  // Hide all views
+  clusterView.classList.add('view-hidden');
+  fractalView.classList.add('view-hidden');
+  rayView.classList.add('view-hidden');
+
+  if (tab === 'cluster') {
+    clusterView.classList.remove('view-hidden');
+    sidebar.classList.remove('view-hidden');
+    mainContainer.classList.remove('no-sidebar');
+    throughputMini.style.display = '';
+    drawAll();
+  } else if (tab === 'fractal') {
+    fractalView.classList.remove('view-hidden');
+    sidebar.classList.remove('view-hidden');
+    mainContainer.classList.remove('no-sidebar');
+    throughputMini.style.display = 'none';
+    resizeFractalCanvas();
+    renderView();
+  } else if (tab === 'ray') {
+    rayView.classList.remove('view-hidden');
+    sidebar.classList.add('view-hidden');
+    mainContainer.classList.add('no-sidebar');
+  }
+}
+
+// --- Chart label updates ---
+function updateChartLabels() {
+  const unit = workloadType === 'fractal' ? 'Tile' : 'Task';
+  const units = unit + 's';
+  document.getElementById('placement-title').textContent = unit + ' Placement by Site';
+  document.getElementById('throughput-title').textContent = 'Throughput (' + units.toLowerCase() + '/sec)';
+  document.getElementById('throughput-mini-title').textContent = 'Throughput (' + units.toLowerCase() + '/sec)';
+  document.getElementById('stat-tps-label').textContent = units + '/sec';
+  document.getElementById('stat-avg-label').textContent = 'Avg ms/' + unit.toLowerCase();
+  document.getElementById('stat-total-label').textContent = 'Total ' + units;
+}
+
+// --- Fractal offscreen ---
 function initOffscreen() {
-  tilePixels = imageSize; // Full resolution per tile
+  tilePixels = imageSize;
   offscreen = document.createElement('canvas');
   offscreen.width = gridSize * tilePixels;
   offscreen.height = gridSize * tilePixels;
   offCtx = offscreen.getContext('2d');
   offCtx.fillStyle = '#0a0e17';
   offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
-  // Draw grid
   offCtx.strokeStyle = '#1e2a3a';
   offCtx.lineWidth = 1;
   for (let i = 0; i <= gridSize; i++) {
@@ -388,30 +589,26 @@ function initOffscreen() {
   }
 }
 
-function resizeCanvas() {
-  // (Re)init offscreen if needed (first call or grid params changed)
+function resizeFractalCanvas() {
   const needsInit = !offscreen || offscreen.width !== gridSize * imageSize;
   if (needsInit) initOffscreen();
 
-  // Fit visible canvas to available space
   const area = canvas.parentElement;
+  if (!area || area.classList.contains('view-hidden')) return;
   const maxW = area.clientWidth - 64;
   const maxH = area.clientHeight - 64;
   const fitSize = Math.max(Math.min(maxW, maxH), 100);
   canvas.width = fitSize;
   canvas.height = fitSize;
 
-  // Calculate zoom that fits entire fractal in the visible canvas
   fitZoom = fitSize / offscreen.width;
-
-  // Auto-fit unless user has manually zoomed/panned
   if (!userHasZoomed) {
     zoom = fitZoom;
     panX = 0;
     panY = 0;
   }
 
-  // Clear and redraw grid on offscreen
+  // Redraw offscreen
   offCtx.fillStyle = '#0a0e17';
   offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
   offCtx.strokeStyle = '#1e2a3a';
@@ -421,8 +618,6 @@ function resizeCanvas() {
     offCtx.beginPath(); offCtx.moveTo(x, 0); offCtx.lineTo(x, offscreen.height); offCtx.stroke();
     offCtx.beginPath(); offCtx.moveTo(0, x); offCtx.lineTo(offscreen.width, x); offCtx.stroke();
   }
-
-  // Redraw all tiles to offscreen
   for (const key in tileData) {
     const d = tileData[key];
     drawTileToOffscreen(d.tile_x, d.tile_y, d.png_b64, d.site_id);
@@ -436,18 +631,17 @@ function drawTileToOffscreen(tx, ty, png_b64, siteId) {
     const x = tx * tilePixels;
     const y = ty * tilePixels;
     offCtx.drawImage(img, x, y, tilePixels, tilePixels);
-    // Border showing site color
     const color = getSiteColor(siteId);
     offCtx.strokeStyle = color;
     offCtx.lineWidth = Math.max(2, tilePixels / 64);
     offCtx.strokeRect(x + 1, y + 1, tilePixels - 2, tilePixels - 2);
-    renderView();
+    if (activeTab === 'fractal') renderView();
   };
   img.src = 'data:image/png;base64,' + png_b64;
 }
 
 function renderView() {
-  if (!zoom) return; // Not yet initialized
+  if (!zoom || !offscreen) return;
   ctx.fillStyle = '#0a0e17';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.save();
@@ -464,7 +658,7 @@ function drawTile(tx, ty, png_b64, siteId) {
   drawTileToOffscreen(tx, ty, png_b64, siteId);
 }
 
-// Zoom with scroll wheel (zoom toward cursor)
+// Zoom with scroll wheel
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -496,35 +690,215 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', () => { isDragging = false; });
 
-// Double-click to reset zoom (fit entire fractal)
+// Double-click to reset zoom
 canvas.addEventListener('dblclick', () => {
   zoom = fitZoom; panX = 0; panY = 0;
   userHasZoomed = false;
   renderView();
 });
 
-// Throughput chart
-const tCanvas = document.getElementById('throughput-canvas');
-const tCtx = tCanvas.getContext('2d');
+// --- Topology chart ---
+function drawTopology() {
+  const c = document.getElementById('topology-canvas');
+  const parent = c.parentElement;
+  const rect = parent.getBoundingClientRect();
+  const dpr = window.devicePixelRatio;
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
 
-function drawThroughput() {
-  const rect = tCanvas.getBoundingClientRect();
-  tCanvas.width = rect.width * window.devicePixelRatio;
-  tCanvas.height = rect.height * window.devicePixelRatio;
-  tCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  g.fillStyle = '#0a0e17';
+  g.fillRect(0, 0, w, h);
+
+  const siteIds = Object.keys(siteStats);
+  if (siteIds.length === 0) {
+    g.fillStyle = '#6b7a90';
+    g.font = '13px Inter, system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.fillText('Waiting for compute sites...', w / 2, h / 2);
+    return;
+  }
+
+  const unitLabel = workloadType === 'fractal' ? 'tiles' : 'tasks';
+
+  // Draw controller node at center-top
+  const cx = w / 2, cy = 50;
+  g.beginPath();
+  g.arc(cx, cy, 22, 0, Math.PI * 2);
+  g.fillStyle = '#22d3ee22';
+  g.fill();
+  g.strokeStyle = '#22d3ee';
+  g.lineWidth = 2;
+  g.stroke();
+  g.fillStyle = '#22d3ee';
+  g.font = 'bold 11px Inter, system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('CTRL', cx, cy);
+
+  // Position site nodes in an arc below
+  const startAngle = Math.PI * 0.2;
+  const endAngle = Math.PI * 0.8;
+  const radius = Math.min(w, h) * 0.35;
+  const arcCenterY = cy + 20;
+
+  siteIds.forEach((siteId, i) => {
+    const s = siteStats[siteId];
+    const color = getSiteColor(siteId);
+    const angle = siteIds.length === 1
+      ? Math.PI / 2
+      : startAngle + (endAngle - startAngle) * (i / (siteIds.length - 1));
+    const sx = cx + Math.cos(angle) * radius * (angle < Math.PI / 2 ? -1 : 1);
+    const rawX = cx - radius * Math.cos(angle);
+    const sy = arcCenterY + radius * Math.sin(angle);
+    const nodeX = w / 2 + (i - (siteIds.length - 1) / 2) * Math.min(180, (w - 100) / siteIds.length);
+    const nodeY = Math.min(h - 60, cy + radius + 30);
+
+    // Connection line
+    g.beginPath();
+    g.moveTo(cx, cy + 22);
+    g.lineTo(nodeX, nodeY - 30);
+    g.strokeStyle = color + '44';
+    g.lineWidth = 2;
+    g.stroke();
+
+    // Animated data flow dots
+    const progress = (Date.now() % 2000) / 2000;
+    if (s.count > 0 && completedTiles < totalTiles) {
+      const dotX = cx + (nodeX - cx) * progress;
+      const dotY = (cy + 22) + (nodeY - 30 - cy - 22) * progress;
+      g.beginPath();
+      g.arc(dotX, dotY, 3, 0, Math.PI * 2);
+      g.fillStyle = color;
+      g.fill();
+    }
+
+    // Site node circle
+    g.beginPath();
+    g.arc(nodeX, nodeY, 28, 0, Math.PI * 2);
+    g.fillStyle = color + '18';
+    g.fill();
+    g.strokeStyle = color;
+    g.lineWidth = 2;
+    g.stroke();
+
+    // Site label
+    const name = s.cluster_name || siteId;
+    const shortName = name.length > 12 ? name.slice(0, 11) + '…' : name;
+    g.fillStyle = color;
+    g.font = 'bold 10px Inter, system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(shortName, nodeX, nodeY - 6);
+
+    // Count + unit
+    g.fillStyle = '#e0e6f0';
+    g.font = 'bold 14px Inter, system-ui, sans-serif';
+    g.fillText(String(s.count), nodeX, nodeY + 10);
+
+    // Workers info below node
+    const workers = s.num_workers || 1;
+    g.fillStyle = '#6b7a90';
+    g.font = '10px Inter, system-ui, sans-serif';
+    g.fillText(workers + ' workers · ' + (s.count) + ' ' + unitLabel, nodeX, nodeY + 42);
+  });
+}
+
+// --- Placement bar chart ---
+function drawPlacement() {
+  const c = document.getElementById('placement-canvas');
+  const parent = c.parentElement;
+  const rect = parent.getBoundingClientRect();
+  const dpr = window.devicePixelRatio;
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+
+  g.fillStyle = '#0a0e17';
+  g.fillRect(0, 0, w, h);
+
+  const siteIds = Object.keys(siteStats);
+  if (siteIds.length === 0) {
+    g.fillStyle = '#6b7a90';
+    g.font = '13px Inter, system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.fillText('No data yet', w / 2, h / 2);
+    return;
+  }
+
+  const pad = { top: 10, right: 20, bottom: 30, left: 90 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+  const maxVal = Math.max(1, ...siteIds.map(s => siteStats[s].count || 0));
+  const barH = Math.min(40, plotH / siteIds.length - 8);
+
+  siteIds.forEach((siteId, i) => {
+    const s = siteStats[siteId];
+    const color = getSiteColor(siteId);
+    const count = s.count || 0;
+    const y = pad.top + i * (plotH / siteIds.length) + (plotH / siteIds.length - barH) / 2;
+    const barW = (count / maxVal) * plotW;
+
+    // Bar
+    g.fillStyle = color + '88';
+    g.beginPath();
+    g.roundRect(pad.left, y, Math.max(barW, 2), barH, 4);
+    g.fill();
+
+    // Bar highlight
+    g.fillStyle = color + 'cc';
+    g.beginPath();
+    g.roundRect(pad.left, y, Math.max(barW, 2), barH / 3, [4, 4, 0, 0]);
+    g.fill();
+
+    // Label (left)
+    const name = s.cluster_name || siteId;
+    const shortName = name.length > 12 ? name.slice(0, 11) + '…' : name;
+    g.fillStyle = color;
+    g.font = '11px Inter, system-ui, sans-serif';
+    g.textAlign = 'right';
+    g.textBaseline = 'middle';
+    g.fillText(shortName, pad.left - 6, y + barH / 2);
+
+    // Count (right of bar)
+    g.fillStyle = '#e0e6f0';
+    g.font = 'bold 12px Inter, system-ui, sans-serif';
+    g.textAlign = 'left';
+    g.fillText(String(count), pad.left + barW + 8, y + barH / 2);
+  });
+
+  // X-axis label
+  const unitLabel = workloadType === 'fractal' ? 'tiles' : 'tasks';
+  g.fillStyle = '#6b7a90';
+  g.font = '10px Inter, system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.fillText(unitLabel + ' completed', w / 2, h - 6);
+}
+
+// --- Throughput chart (shared renderer for main + mini) ---
+function drawThroughputOn(canvasEl) {
+  const rect = canvasEl.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  canvasEl.width = rect.width * window.devicePixelRatio;
+  canvasEl.height = rect.height * window.devicePixelRatio;
+  const g = canvasEl.getContext('2d');
+  g.scale(window.devicePixelRatio, window.devicePixelRatio);
   const w = rect.width, h = rect.height;
   const pad = 4;
   const plotH = h - pad;
 
-  tCtx.fillStyle = '#0a0e17';
-  tCtx.fillRect(0, 0, w, h);
+  g.fillStyle = '#0a0e17';
+  g.fillRect(0, 0, w, h);
 
   if (throughputHistory.length < 1) return;
 
   const points = throughputHistory.slice(-60);
   const sites = Object.keys(SITE_COLORS);
 
-  // For stacked bar chart, compute max stacked total
   let maxVal = 1;
   points.forEach(p => {
     let stacked = 0;
@@ -532,7 +906,6 @@ function drawThroughput() {
     if (stacked > maxVal) maxVal = stacked;
   });
 
-  // Draw stacked bars
   const barW = Math.max(Math.floor(w / Math.max(points.length, 1)) - 1, 3);
   const gap = Math.max(Math.floor((w - barW * points.length) / Math.max(points.length, 1)), 1);
 
@@ -542,38 +915,61 @@ function drawThroughput() {
     sites.forEach(siteId => {
       const val = p.perSite[siteId] || 0;
       if (val <= 0) return;
-      const barH = Math.max((val / maxVal) * plotH, 1);
+      const bH = Math.max((val / maxVal) * plotH, 1);
       const color = getSiteColor(siteId);
-      tCtx.fillStyle = color + 'aa';
-      tCtx.fillRect(x, yBottom - barH, barW, barH);
-      yBottom -= barH;
+      g.fillStyle = color + 'aa';
+      g.fillRect(x, yBottom - bH, barW, bH);
+      yBottom -= bH;
     });
   });
 
-  // Draw connecting lines per site on top
   if (points.length >= 2) {
     sites.forEach(siteId => {
       const color = getSiteColor(siteId);
-      tCtx.beginPath();
+      g.beginPath();
       points.forEach((p, i) => {
         const x = i * (barW + gap) + barW / 2;
         const val = p.perSite[siteId] || 0;
         const y = h - (val / maxVal) * plotH;
-        if (i === 0) tCtx.moveTo(x, y);
-        else tCtx.lineTo(x, y);
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
       });
-      tCtx.strokeStyle = color;
-      tCtx.lineWidth = 1.5;
-      tCtx.stroke();
+      g.strokeStyle = color;
+      g.lineWidth = 1.5;
+      g.stroke();
     });
   }
 }
 
+function drawThroughput() {
+  // Draw on whichever canvases are visible
+  if (activeTab === 'cluster') {
+    drawThroughputOn(document.getElementById('throughput-canvas'));
+  }
+  // Mini throughput in sidebar (visible on cluster tab)
+  const miniCard = document.getElementById('throughput-mini-card');
+  if (miniCard.style.display !== 'none') {
+    drawThroughputOn(document.getElementById('throughput-mini-canvas'));
+  }
+}
+
+// --- Draw all charts for current tab ---
+function drawAll() {
+  if (activeTab === 'cluster') {
+    drawTopology();
+    drawPlacement();
+    drawThroughput();
+  } else if (activeTab === 'fractal') {
+    resizeFractalCanvas();
+  }
+}
+
 function updateStats(elapsed_s) {
+  const unitLabel = workloadType === 'fractal' ? 'tiles' : 'tasks';
   const pct = totalTiles > 0 ? (completedTiles / totalTiles * 100) : 0;
   document.getElementById('progress-bar').style.width = pct + '%';
   document.getElementById('progress-label').textContent =
-    `${completedTiles} / ${totalTiles} tiles (${Math.round(pct)}%)`;
+    `${completedTiles} / ${totalTiles} ${unitLabel} (${Math.round(pct)}%)`;
 
   const el = elapsed_s || (startTime ? (Date.now() / 1000 - startTime) : 0);
   document.getElementById('stat-elapsed').textContent =
@@ -616,7 +1012,7 @@ function updateStats(elapsed_s) {
       const scheduler = s.scheduler_type ? ` (${s.scheduler_type})` : '';
       const workers = s.num_workers || 1;
       const siteLabel = `Site ${idx + 1}`;
-      const icon = '&#9900;'; // generic dot icon
+      const icon = '&#9900;';
       const avgMs = s.count > 0 ? Math.round(s.total_render_ms / s.count) : 0;
       container.innerHTML += `
         <div class="site-card">
@@ -631,10 +1027,9 @@ function updateStats(elapsed_s) {
     updateHeaderLegend();
   }
 
-  // Record throughput (only during live rendering, not late-join)
+  // Record throughput
   const now = Date.now() / 1000;
   if (lastThroughputCheck === null) {
-    // Initialize on first call — snapshot current state, don't record a point
     lastThroughputCheck = now;
     siteIds.forEach(s => { lastTileCounts[s] = siteStats[s].count || 0; });
   } else if (now - lastThroughputCheck >= 1) {
@@ -653,12 +1048,17 @@ function updateStats(elapsed_s) {
     lastThroughputCheck = now;
     drawThroughput();
   }
+
+  // Redraw cluster charts if on cluster tab
+  if (activeTab === 'cluster') {
+    drawTopology();
+    drawPlacement();
+  }
 }
 
 // WebSocket connection
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // Handle session proxy: use pathname as base for WebSocket and API calls
   const basePath = location.pathname.replace(/\/$/, '');
   const ws = new WebSocket(proto + '//' + location.host + basePath + '/ws');
 
@@ -672,7 +1072,12 @@ function connect() {
       totalTiles = msg.total;
       completedTiles = msg.completed;
       Object.assign(siteStats, msg.site_stats || {});
-      resizeCanvas();
+
+      // Show fractal tab (this dashboard is always fractal mode)
+      document.getElementById('tab-fractal').classList.remove('hidden');
+      initOffscreen();
+      updateChartLabels();
+
       // Fetch full state for late-join
       if (completedTiles > 0) {
         fetch(basePath + '/api/state').then(r => r.json()).then(data => {
@@ -684,7 +1089,7 @@ function connect() {
           completedTiles = data.completed_tiles;
           if (data.elapsed_s > 0 && !startTime) startTime = Date.now() / 1000 - data.elapsed_s;
           Object.assign(siteStats, data.site_stats);
-          // Load server-computed throughput history for late-joiners
+          // Load server-computed throughput history
           if (data.throughput_history && data.throughput_history.length > 0) {
             throughputHistory.length = 0;
             const baseTs = startTime || (Date.now() / 1000 - data.elapsed_s);
@@ -695,12 +1100,15 @@ function connect() {
                 perSite: b.perSite
               });
             });
-            // Initialize live tracking from current state
             lastThroughputCheck = Date.now() / 1000;
             Object.keys(siteStats).forEach(s => { lastTileCounts[s] = siteStats[s].count || 0; });
             drawThroughput();
           }
-          resizeCanvas();
+          // Auto-switch to fractal tab for late-joiners with tiles
+          if (Object.keys(tileData).length > 0) {
+            switchTab('fractal');
+          }
+          drawAll();
           updateStats(data.elapsed_s);
         });
       }
@@ -712,6 +1120,11 @@ function connect() {
       Object.assign(siteStats, msg.site_stats || {});
       drawTile(msg.tile_x, msg.tile_y, msg.png_b64, msg.site_id);
       updateStats(msg.elapsed_s);
+
+      // Auto-switch to fractal tab on first tile
+      if (completedTiles === 1 && activeTab === 'cluster') {
+        switchTab('fractal');
+      }
     }
   };
 
@@ -721,11 +1134,23 @@ function connect() {
   };
 }
 
+// --- Topology animation loop ---
+let topoAnimFrame = null;
+function animateTopology() {
+  if (activeTab === 'cluster' && completedTiles < totalTiles && completedTiles > 0) {
+    drawTopology();
+  }
+  topoAnimFrame = requestAnimationFrame(animateTopology);
+}
+
 // Init
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+window.addEventListener('resize', () => {
+  drawAll();
+});
+updateChartLabels();
+switchTab('cluster');
 connect();
-// Periodic stats update
+animateTopology();
 setInterval(() => updateStats(), 1000);
 </script>
 </body>
