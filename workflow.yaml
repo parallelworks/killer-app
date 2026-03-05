@@ -270,7 +270,8 @@ jobs:
                 type: editor
                 label: Additional Directives
                 optional: true
-                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+                hidden: true
+                ignore: true
 
           pbs:
             type: group
