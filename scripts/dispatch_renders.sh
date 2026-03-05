@@ -136,10 +136,21 @@ render_site() {
             bash "${SCRIPT_DIR}/render_tiles.sh"
         )
     else
-        # Remote site — checkout, setup, and render via pw ssh
+        # Remote site — checkout, setup, and render via SSH with reverse tunnel
         echo "[${site_id}] Dispatching to remote site ${site_name}..."
 
-        # Build render script as a temp file (pw ssh doesn't pass stdin)
+        # Allocate a port on the remote for the dashboard tunnel
+        local tunnel_port
+        tunnel_port=$(${PW_CMD} ssh "${site_name}" \
+            'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
+
+        if [ -z "${tunnel_port}" ] || ! [[ "${tunnel_port}" =~ ^[0-9]+$ ]]; then
+            echo "[${site_id}] [ERROR] Failed to allocate tunnel port (got: '${tunnel_port}')"
+            return 1
+        fi
+        echo "[${site_id}] Tunnel port: ${tunnel_port} (remote localhost -> dashboard)"
+
+        # Build render script
         local script_file="${WORK_DIR}/render_${site_id}.sh"
         cat > "${script_file}" <<RENDER_SCRIPT
 #!/bin/bash
@@ -160,8 +171,8 @@ fi
 # Setup
 bash scripts/setup.sh
 
-# Render
-export DASHBOARD_URL='${DASHBOARD_URL}'
+# Render — dashboard accessible via reverse tunnel on localhost
+export DASHBOARD_URL='http://localhost:${tunnel_port}'
 export SITE_ID='${site_id}'
 export TILE_START=${tile_start}
 export TILE_END=${tile_end}
@@ -173,10 +184,19 @@ $([ "${PARALLELISM}" != "auto" ] && echo "export NUM_WORKERS=${PARALLELISM}")
 bash scripts/render_tiles.sh
 RENDER_SCRIPT
 
-        # Read script content and pass as a single command string
+        # Use raw ssh with pw as ProxyCommand to get -R (reverse tunnel) support
+        # -R forwards remote's tunnel_port to dashboard host's DASHBOARD_PORT
         local script_content
         script_content=$(cat "${script_file}")
-        ${PW_CMD} ssh "${site_name}" "${script_content}" 2>&1 | \
+        ssh -i ~/.ssh/pwcli \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=15 \
+            -o ProxyCommand="${PW_CMD} ssh --proxy-command %h" \
+            -R "${tunnel_port}:localhost:${DASHBOARD_PORT}" \
+            "${PW_USER}@${site_name}" \
+            "${script_content}" 2>&1 | \
             sed "s/^/[${site_id}] /"
     fi
 }
