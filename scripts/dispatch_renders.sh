@@ -163,7 +163,7 @@ render_site() {
             bash scripts/render_tiles.sh
         "
 
-        ${PW_CMD} ssh "${site_name}" bash -c "$(echo "${render_cmd}" | sed "s/'/'\\\\''/g")" 2>&1 | \
+        echo "${render_cmd}" | ${PW_CMD} ssh "${site_name}" bash 2>&1 | \
             sed "s/^/[${site_id}] /"
     fi
 }
