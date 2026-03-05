@@ -362,9 +362,10 @@ let offCtx = null;
 let tilePixels = 128;
 
 // Zoom/pan state
-let zoom = 1;  // Will be set to fit-zoom on first resize
+let zoom = null;  // null = not yet set, will auto-fit
 let panX = 0, panY = 0;
 let fitZoom = 1; // Zoom level that fits entire fractal in view
+let userHasZoomed = false; // Track whether user has manually zoomed/panned
 let isDragging = false;
 let dragStartX = 0, dragStartY = 0;
 let panStartX = 0, panStartY = 0;
@@ -398,9 +399,11 @@ function resizeCanvas() {
   canvas.height = fitSize;
   // Calculate zoom that fits entire fractal in the visible canvas
   fitZoom = fitSize / offscreen.width;
-  // On first load or reset, use fit zoom
-  if (zoom === 1 && panX === 0 && panY === 0) {
+  // Auto-fit unless user has manually zoomed/panned
+  if (!userHasZoomed) {
     zoom = fitZoom;
+    panX = 0;
+    panY = 0;
   }
   // Redraw offscreen tiles
   if (offscreen.width !== gridSize * tilePixels) initOffscreen();
@@ -439,6 +442,7 @@ function drawTileToOffscreen(tx, ty, png_b64, siteId) {
 }
 
 function renderView() {
+  if (!zoom) return; // Not yet initialized
   ctx.fillStyle = '#0a0e17';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.save();
@@ -466,6 +470,7 @@ canvas.addEventListener('wheel', (e) => {
   panY -= my * (zoomFactor - 1);
   zoom *= zoomFactor;
   zoom = Math.max(0.1, Math.min(zoom, 20));
+  userHasZoomed = true;
   renderView();
 }, { passive: false });
 
@@ -481,6 +486,7 @@ window.addEventListener('mousemove', (e) => {
   if (!isDragging) return;
   panX = panStartX + (e.clientX - dragStartX);
   panY = panStartY + (e.clientY - dragStartY);
+  userHasZoomed = true;
   renderView();
 });
 window.addEventListener('mouseup', () => { isDragging = false; });
@@ -488,6 +494,7 @@ window.addEventListener('mouseup', () => { isDragging = false; });
 // Double-click to reset zoom (fit entire fractal)
 canvas.addEventListener('dblclick', () => {
   zoom = fitZoom; panX = 0; panY = 0;
+  userHasZoomed = false;
   renderView();
 });
 
