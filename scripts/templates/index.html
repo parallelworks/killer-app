@@ -389,27 +389,31 @@ function initOffscreen() {
 }
 
 function resizeCanvas() {
-  if (!offscreen) initOffscreen();
-  // Fit canvas to available space
+  // (Re)init offscreen if needed (first call or grid params changed)
+  const needsInit = !offscreen || offscreen.width !== gridSize * imageSize;
+  if (needsInit) initOffscreen();
+
+  // Fit visible canvas to available space
   const area = canvas.parentElement;
   const maxW = area.clientWidth - 64;
   const maxH = area.clientHeight - 64;
-  const fitSize = Math.min(maxW, maxH);
+  const fitSize = Math.max(Math.min(maxW, maxH), 100);
   canvas.width = fitSize;
   canvas.height = fitSize;
+
   // Calculate zoom that fits entire fractal in the visible canvas
   fitZoom = fitSize / offscreen.width;
+
   // Auto-fit unless user has manually zoomed/panned
   if (!userHasZoomed) {
     zoom = fitZoom;
     panX = 0;
     panY = 0;
   }
-  // Redraw offscreen tiles
-  if (offscreen.width !== gridSize * tilePixels) initOffscreen();
+
+  // Clear and redraw grid on offscreen
   offCtx.fillStyle = '#0a0e17';
   offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
-  // Grid
   offCtx.strokeStyle = '#1e2a3a';
   offCtx.lineWidth = 1;
   for (let i = 0; i <= gridSize; i++) {
@@ -417,6 +421,7 @@ function resizeCanvas() {
     offCtx.beginPath(); offCtx.moveTo(x, 0); offCtx.lineTo(x, offscreen.height); offCtx.stroke();
     offCtx.beginPath(); offCtx.moveTo(0, x); offCtx.lineTo(offscreen.width, x); offCtx.stroke();
   }
+
   // Redraw all tiles to offscreen
   for (const key in tileData) {
     const d = tileData[key];
