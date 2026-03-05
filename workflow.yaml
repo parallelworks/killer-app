@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://activate.parallel.works/workflow.schema.json
 ---
-# Multi-Site Burst Renderer — Mandelbrot fractal rendered in parallel across two sites
+# Multi-Site Burst Renderer — Mandelbrot fractal rendered in parallel across N sites
 # Dashboard assembles tiles in real-time via the ACTIVATE session proxy
 
 permissions:
@@ -12,27 +12,14 @@ sessions:
 
 jobs:
   # =============================================================================
-  # CHECKOUT — Clone scripts to both resources
+  # CHECKOUT — Clone scripts to first target (dashboard host)
   # =============================================================================
-  checkout_onprem:
+  checkout:
     steps:
-      - name: Checkout scripts to on-prem resource
+      - name: Checkout scripts to dashboard host
         uses: parallelworks/checkout
         ssh:
-          remoteHost: ${{ inputs.onprem_resource.ip }}
-        with:
-          repo: https://github.com/parallelworks/burst-render-demo.git
-          branch: main
-          sparse_checkout:
-            - scripts
-
-  checkout_cloud:
-    needs: [checkout_onprem]
-    steps:
-      - name: Checkout scripts to cloud resource
-        uses: parallelworks/checkout
-        ssh:
-          remoteHost: ${{ inputs.cloud_resource.ip }}
+          remoteHost: ${{ inputs.targets.0.resource.ip }}
         with:
           repo: https://github.com/parallelworks/burst-render-demo.git
           branch: main
@@ -40,12 +27,12 @@ jobs:
             - scripts
 
   # =============================================================================
-  # DASHBOARD — Start on on-prem resource (always-on, no scheduler)
+  # DASHBOARD — Start on first target
   # =============================================================================
   start_dashboard:
-    needs: [checkout_onprem]
+    needs: [checkout]
     ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
+      remoteHost: ${{ inputs.targets.0.resource.ip }}
     steps:
       - name: Run setup
         run: |
@@ -62,9 +49,9 @@ jobs:
   # WAIT FOR DASHBOARD — Poll for coordination files
   # =============================================================================
   wait_for_dashboard:
-    needs: [checkout_onprem]
+    needs: [checkout]
     ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
+      remoteHost: ${{ inputs.targets.0.resource.ip }}
     steps:
       - name: Wait for dashboard ready
         early-cancel: any-job-failed
@@ -124,7 +111,7 @@ jobs:
   update_session:
     needs: [wait_for_dashboard]
     ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
+      remoteHost: ${{ inputs.targets.0.resource.ip }}
     steps:
       - name: Get local port
         run: |
@@ -134,7 +121,7 @@ jobs:
       - name: Update session
         uses: parallelworks/update-session
         with:
-          target: ${{ inputs.onprem_resource.id }}
+          target: ${{ inputs.targets.0.resource.id }}
           name: ${{ sessions.session }}
           remoteHost: ${{ needs.wait_for_dashboard.outputs.HOSTNAME }}
           remotePort: ${{ needs.wait_for_dashboard.outputs.SESSION_PORT }}
@@ -146,7 +133,7 @@ jobs:
   configure_dashboard:
     needs: [wait_for_dashboard]
     ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
+      remoteHost: ${{ inputs.targets.0.resource.ip }}
     steps:
       - name: Set grid config
         run: |
@@ -155,7 +142,6 @@ jobs:
           DASHBOARD_URL="http://${DASHBOARD_HOST}:${DASHBOARD_PORT}"
           GRID_SIZE=${{ inputs.render_settings.grid_size }}
           TOTAL_TILES=$(( GRID_SIZE * GRID_SIZE ))
-          HALF=$(( TOTAL_TILES / 2 ))
 
           echo "Configuring dashboard at ${DASHBOARD_URL}..."
           curl -s -X POST "${DASHBOARD_URL}/api/config" \
@@ -165,120 +151,35 @@ jobs:
           echo "DASHBOARD_URL=${DASHBOARD_URL}" >> "${OUTPUTS}"
           echo "DASHBOARD_PORT=${DASHBOARD_PORT}" >> "${OUTPUTS}"
           echo "TOTAL_TILES=${TOTAL_TILES}" >> "${OUTPUTS}"
-          echo "HALF_TILES=${HALF}" >> "${OUTPUTS}"
           echo "Dashboard configured: ${GRID_SIZE}x${GRID_SIZE} grid, ${{ inputs.render_settings.image_size }}px tiles"
 
   # =============================================================================
-  # RENDER ON-PREM — Render first half of tiles on on-prem resource
+  # RENDER — Dispatch rendering across all targets
   # =============================================================================
-  render_onprem:
-    needs: [configure_dashboard, checkout_onprem]
+  render:
+    needs: [configure_dashboard, checkout]
     ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
+      remoteHost: ${{ inputs.targets.0.resource.ip }}
     steps:
-      - name: Render tiles (on-prem)
+      - name: Dispatch renders to all sites
         run: |
           set -e
           export DASHBOARD_URL="${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}"
-          export SITE_ID="site-1"
-          export TILE_START=0
-          export TILE_END="${{ needs.configure_dashboard.outputs.HALF_TILES }}"
+          export DASHBOARD_PORT="${{ needs.configure_dashboard.outputs.DASHBOARD_PORT }}"
+          export TOTAL_TILES="${{ needs.configure_dashboard.outputs.TOTAL_TILES }}"
           export GRID_SIZE="${{ inputs.render_settings.grid_size }}"
           export IMAGE_SIZE="${{ inputs.render_settings.image_size }}"
           export PALETTE="${{ inputs.render_settings.palette }}"
-          PARALLELISM="${{ inputs.render_settings.parallelism }}"
-          [ "${PARALLELISM}" != "auto" ] && export NUM_WORKERS="${PARALLELISM}"
+          export PARALLELISM="${{ inputs.render_settings.parallelism }}"
+          export TARGETS_JSON='${{ inputs.targets }}'
 
-          bash scripts/render_tiles.sh
-
-  # =============================================================================
-  # TUNNEL — Reverse SSH tunnel from on-prem to cloud for dashboard access
-  # =============================================================================
-  setup_tunnel:
-    needs: [configure_dashboard, checkout_cloud]
-    ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
-    steps:
-      - name: Create reverse tunnel to cloud
-        run: |
-          set -e
-          export DASHBOARD_PORT=${{ needs.configure_dashboard.outputs.DASHBOARD_PORT }}
-          export CLOUD_RESOURCE_NAME="${{ inputs.cloud_resource.name }}"
-          bash scripts/setup_tunnel.sh
+          bash scripts/dispatch_renders.sh
 
   # =============================================================================
-  # WAIT FOR TUNNEL — Poll for tunnel coordination file
-  # =============================================================================
-  wait_for_tunnel:
-    needs: [configure_dashboard]
-    ssh:
-      remoteHost: ${{ inputs.onprem_resource.ip }}
-    steps:
-      - name: Wait for tunnel ready
-        early-cancel: any-job-failed
-        run: |
-          set -e
-          JOB_DIR="${PW_PARENT_JOB_DIR%/}"
-
-          echo "Waiting for tunnel..."
-          attempt=1
-          while [ ! -f "${JOB_DIR}/TUNNEL_PORT" ]; do
-            echo "[${attempt}/60] Waiting for TUNNEL_PORT..."
-            sleep 2
-            ((attempt++))
-            [ ${attempt} -gt 60 ] && { echo "ERROR: Tunnel timeout"; exit 1; }
-          done
-          TUNNEL_PORT=$(cat "${JOB_DIR}/TUNNEL_PORT")
-          echo "Tunnel port: ${TUNNEL_PORT}"
-          echo "TUNNEL_PORT=${TUNNEL_PORT}" >> "${OUTPUTS}"
-
-  # =============================================================================
-  # RENDER CLOUD — Render second half of tiles on cloud resource
-  # =============================================================================
-  render_cloud:
-    needs: [configure_dashboard, checkout_cloud, wait_for_tunnel]
-    ssh:
-      remoteHost: ${{ inputs.cloud_resource.ip }}
-    steps:
-      - name: Run setup on cloud
-        run: |
-          set -e
-          cd scripts
-          bash setup.sh
-
-      - name: Render tiles (cloud)
-        early-cancel: any-job-failed
-        run: |
-          set -e
-          # Try direct dashboard URL first (works when on same host / workspace)
-          # Fall back to reverse tunnel (needed when running on actual cloud resource)
-          DIRECT_URL="${{ needs.configure_dashboard.outputs.DASHBOARD_URL }}"
-          TUNNEL_URL="http://localhost:${{ needs.wait_for_tunnel.outputs.TUNNEL_PORT }}"
-
-          if curl -s --connect-timeout 3 "${DIRECT_URL}/api/state" -o /dev/null 2>&1; then
-            export DASHBOARD_URL="${DIRECT_URL}"
-            echo "Using direct dashboard URL: ${DASHBOARD_URL}"
-          else
-            export DASHBOARD_URL="${TUNNEL_URL}"
-            echo "Direct URL unreachable, using tunnel: ${DASHBOARD_URL}"
-          fi
-
-          export SITE_ID="site-2"
-          export TILE_START="${{ needs.configure_dashboard.outputs.HALF_TILES }}"
-          export TILE_END="${{ needs.configure_dashboard.outputs.TOTAL_TILES }}"
-          export GRID_SIZE="${{ inputs.render_settings.grid_size }}"
-          export IMAGE_SIZE="${{ inputs.render_settings.image_size }}"
-          export PALETTE="${{ inputs.render_settings.palette }}"
-          PARALLELISM="${{ inputs.render_settings.parallelism }}"
-          [ "${PARALLELISM}" != "auto" ] && export NUM_WORKERS="${PARALLELISM}"
-
-          bash scripts/render_tiles.sh
-
-  # =============================================================================
-  # COMPLETE — Wait for both renderers, print summary
+  # COMPLETE — Print summary
   # =============================================================================
   complete:
-    needs: [render_onprem, render_cloud, update_session, configure_dashboard]
+    needs: [render, update_session, configure_dashboard]
     steps:
       - name: Workflow complete
         run: |
@@ -300,20 +201,93 @@ jobs:
   execute:
     inputs:
       # -----------------------------------------------------------------------
-      # Resources
+      # Targets (N compute sites)
       # -----------------------------------------------------------------------
-      onprem_resource:
-        type: compute-clusters
-        label: On-Prem Resource (Dashboard + Render)
-        tooltip: Always-on resource for dashboard and half of rendering (e.g., a30gpu). Runs via SSH (no scheduler).
-        include-workspace: false
-        autoselect: true
+      targets:
+        type: list
+        label: Compute Sites
+        template:
+          resource:
+            label: Resource
+            type: compute-clusters
+            include-workspace: false
+            tooltip: Select a compute resource. The first resource hosts the dashboard and renders tiles. Additional resources render tiles in parallel.
 
-      cloud_resource:
-        type: compute-clusters
-        label: Cloud Resource (Render)
-        tooltip: Cloud cluster for the other half of rendering (e.g., awssmall). Can use Slurm scheduler.
-        include-workspace: false
+          scheduler:
+            type: boolean
+            default: false
+            label: Schedule Job?
+            hidden: ${{ inputs.targets.[index].resource.schedulerType == '' }}
+            ignore: ${{ .hidden }}
+            tooltip: |
+              Yes - Job is submitted to the scheduler using sbatch, qsub, etc.
+              No  - Job runs directly on the login/controller node via SSH.
+
+          slurm:
+            type: group
+            label: SLURM Directives
+            hidden: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+            collapsed: true
+            items:
+              is_disabled:
+                type: boolean
+                hidden: true
+                default: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+
+              partition:
+                type: slurm-partitions
+                label: Partition
+                optional: true
+                resource: ${{ inputs.targets.[index].resource }}
+                tooltip: Select a SLURM partition
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+
+              account:
+                label: Account
+                type: slurm-accounts
+                resource: ${{ inputs.targets.[index].resource }}
+                tooltip: SLURM account (--account)
+                optional: true
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+
+              qos:
+                label: QoS
+                type: slurm-qos
+                resource: ${{ inputs.targets.[index].resource }}
+                optional: true
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+
+              time:
+                label: Walltime
+                type: string
+                default: "01:00:00"
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+
+              scheduler_directives:
+                type: editor
+                label: Additional Directives
+                optional: true
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'slurm' || inputs.targets.[index].scheduler == false }}
+
+          pbs:
+            type: group
+            label: PBS Directives
+            hidden: ${{ inputs.targets.[index].resource.schedulerType != 'pbs' || inputs.targets.[index].scheduler == false }}
+            collapsed: true
+            items:
+              is_disabled:
+                type: boolean
+                hidden: true
+                default: ${{ inputs.targets.[index].resource.schedulerType != 'pbs' || inputs.targets.[index].scheduler == false }}
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'pbs' || inputs.targets.[index].scheduler == false }}
+
+              scheduler_directives:
+                label: PBS Directives
+                type: editor
+                tooltip: Type PBS scheduler directives
+                optional: true
+                ignore: ${{ inputs.targets.[index].resource.schedulerType != 'pbs' || inputs.targets.[index].scheduler == false }}
 
       # -----------------------------------------------------------------------
       # Render Settings
@@ -380,67 +354,3 @@ jobs:
                 label: "4 workers"
               - value: "8"
                 label: "8 workers"
-
-      # -----------------------------------------------------------------------
-      # Scheduler
-      # -----------------------------------------------------------------------
-      submit_cloud_to_scheduler:
-        type: boolean
-        label: Submit Cloud Job to Scheduler
-        tooltip: Enable to submit the cloud render job via SLURM. Disable for direct SSH execution.
-        default: false
-        hidden: ${{ inputs.cloud_resource.schedulerType != 'slurm' && inputs.cloud_resource.schedulerType != 'pbs' }}
-
-      slurm:
-        type: group
-        label: SLURM Configuration (Cloud)
-        hidden: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-        collapsed: true
-        items:
-          is_disabled:
-            type: boolean
-            default: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-            hidden: true
-
-          account:
-            label: Account
-            type: slurm-accounts
-            resource: ${{ inputs.cloud_resource }}
-            tooltip: SLURM account (--account)
-            optional: true
-            ignore: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-
-          partition:
-            type: slurm-partitions
-            label: Partition
-            optional: true
-            resource: ${{ inputs.cloud_resource }}
-            tooltip: Partition (--partition)
-            ignore: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-
-          qos:
-            label: QoS
-            type: slurm-qos
-            resource: ${{ inputs.cloud_resource }}
-            optional: true
-            ignore: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-
-          cpus_per_task:
-            type: number
-            label: CPUs per Task
-            min: 1
-            max: 256
-            default: 1
-            ignore: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-
-          time:
-            label: Walltime
-            type: string
-            default: 01:00:00
-            ignore: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
-
-          scheduler_directives:
-            type: editor
-            label: Additional Directives
-            optional: true
-            ignore: ${{ inputs.submit_cloud_to_scheduler != true || inputs.cloud_resource.schedulerType != 'slurm' }}
