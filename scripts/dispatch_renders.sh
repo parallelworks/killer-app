@@ -144,7 +144,10 @@ render_site() {
         cat > "${script_file}" <<RENDER_SCRIPT
 #!/bin/bash
 set -e
-cd \${PW_PARENT_JOB_DIR:-\${HOME}/pw/jobs}
+WORK=\${PW_PARENT_JOB_DIR:-\${HOME}/pw/jobs/burst_render_remote}
+mkdir -p "\${WORK}"
+cd "\${WORK}"
+export PW_PARENT_JOB_DIR="\${WORK}"
 
 # Checkout if not already done
 if [ ! -f scripts/render_tiles.sh ]; then
@@ -155,7 +158,7 @@ if [ ! -f scripts/render_tiles.sh ]; then
 fi
 
 # Setup
-cd scripts && bash setup.sh && cd ..
+bash scripts/setup.sh
 
 # Render
 export DASHBOARD_URL='${DASHBOARD_URL}'
