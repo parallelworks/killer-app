@@ -76,9 +76,14 @@ fi
 # Script directory — checkout places scripts under $PW_PARENT_JOB_DIR/scripts/
 SCRIPT_DIR="${PW_PARENT_JOB_DIR%/}/scripts"
 RENDERER="${SCRIPT_DIR}/renderer.py"
+POST_TILE="${SCRIPT_DIR}/post_tile.py"
 
 if [ ! -f "${RENDERER}" ]; then
     echo "[ERROR] renderer.py not found at ${RENDERER}"
+    exit 1
+fi
+if [ ! -f "${POST_TILE}" ]; then
+    echo "[ERROR] post_tile.py not found at ${POST_TILE}"
     exit 1
 fi
 
@@ -140,15 +145,9 @@ render_one() {
         --output "${tile_file}" \
     )
 
-    # POST tile to dashboard
+    # POST tile to dashboard (uses Python stdlib — no curl dependency)
     local HTTP_CODE
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-        -X POST "${DASHBOARD_URL}/api/tile" \
-        -F "tile=@${tile_file}" \
-        -F "metadata=${META}" \
-        --connect-timeout 10 \
-        --max-time 30 \
-    ) || HTTP_CODE="000"
+    HTTP_CODE=$(${PYTHON_CMD} "${POST_TILE}" "${DASHBOARD_URL}" "${tile_file}" "${META}" 2>/dev/null) || HTTP_CODE="000"
 
     local count
     count=$(atomic_inc "${WORK_DIR}/completed")
@@ -166,7 +165,7 @@ render_one() {
 }
 
 export -f render_one atomic_inc
-export PYTHON_CMD RENDERER GRID_SIZE IMAGE_SIZE PALETTE SITE_ID CLUSTER_NAME SCHEDULER_TYPE DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR NUM_WORKERS
+export PYTHON_CMD RENDERER POST_TILE GRID_SIZE IMAGE_SIZE PALETTE SITE_ID CLUSTER_NAME SCHEDULER_TYPE DASHBOARD_URL WORK_DIR TOTAL LOCK_DIR NUM_WORKERS
 
 # Launch tiles across workers using xargs for parallel execution
 seq ${TILE_START} $((TILE_END - 1)) | xargs -P "${NUM_WORKERS}" -I{} bash -c 'render_one "$@"' _ {}

@@ -32,7 +32,7 @@ if [ ! -f "${SCRIPT_DIR}/dashboard.py" ]; then
 fi
 
 # =============================================================================
-# Install dependencies
+# Find Python
 # =============================================================================
 PYTHON_CMD=""
 for cmd in python3 python; do
@@ -45,20 +45,65 @@ if [ -z "${PYTHON_CMD}" ]; then
 fi
 echo "Python: ${PYTHON_CMD}"
 
-# Install pip deps if needed
-${PYTHON_CMD} -c "import fastapi" 2>/dev/null || {
-    echo "Installing fastapi, uvicorn, python-multipart, websockets..."
-    ${PYTHON_CMD} -m pip install --user --quiet fastapi uvicorn python-multipart websockets 2>&1 || {
-        echo "pip --user failed (PEP 668?), trying virtual environment..."
-        VENV_DIR="${JOB_DIR}/.venv"
-        ${PYTHON_CMD} -m venv "${VENV_DIR}"
-        PYTHON_CMD="${VENV_DIR}/bin/python"
-        ${PYTHON_CMD} -m pip install --quiet fastapi uvicorn python-multipart websockets 2>&1 || {
-            echo "[ERROR] Failed to install dependencies"
-            exit 1
-        }
-    }
+# =============================================================================
+# Install dependencies (prefer uv, fall back to pip)
+# =============================================================================
+VENV_DIR="${JOB_DIR}/.venv"
+
+install_with_uv() {
+    local uv_bin=""
+
+    # Check if setup.sh cached the uv path
+    if [ -f "${JOB_DIR}/UV_PATH" ]; then
+        uv_bin=$(cat "${JOB_DIR}/UV_PATH")
+    fi
+
+    # Verify uv exists
+    if [ -z "${uv_bin}" ] || [ ! -x "${uv_bin}" ]; then
+        return 1
+    fi
+
+    echo "Installing dependencies with uv..."
+    "${uv_bin}" venv "${VENV_DIR}" --python "${PYTHON_CMD}" --quiet 2>&1
+    "${uv_bin}" pip install --python "${VENV_DIR}/bin/python" \
+        --quiet fastapi uvicorn python-multipart websockets 2>&1
+    PYTHON_CMD="${VENV_DIR}/bin/python"
+    return 0
 }
+
+install_with_pip() {
+    echo "Installing dependencies with pip..."
+    # Try pip --user first
+    ${PYTHON_CMD} -m pip install --user --quiet \
+        fastapi uvicorn python-multipart websockets 2>&1 && return 0
+
+    # PEP 668 / externally managed — use venv
+    echo "pip --user failed (PEP 668?), trying virtual environment..."
+    ${PYTHON_CMD} -m venv "${VENV_DIR}" 2>&1
+    PYTHON_CMD="${VENV_DIR}/bin/python"
+    ${PYTHON_CMD} -m pip install --quiet \
+        fastapi uvicorn python-multipart websockets 2>&1 && return 0
+
+    return 1
+}
+
+# Skip install if deps already available (e.g., from previous run or shared venv)
+if [ -x "${VENV_DIR}/bin/python" ]; then
+    PYTHON_CMD="${VENV_DIR}/bin/python"
+    echo "Reusing existing venv: ${VENV_DIR}"
+fi
+
+${PYTHON_CMD} -c "import fastapi" 2>/dev/null || {
+    if ! install_with_uv; then
+        if ! install_with_pip; then
+            echo "[ERROR] Failed to install dependencies with both uv and pip"
+            exit 1
+        fi
+    fi
+}
+
+echo "Using Python: ${PYTHON_CMD}"
+${PYTHON_CMD} -c "import fastapi; print(f'  fastapi {fastapi.__version__}')" 2>/dev/null || true
 
 # =============================================================================
 # Port allocation

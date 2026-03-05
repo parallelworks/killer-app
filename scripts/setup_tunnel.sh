@@ -6,8 +6,23 @@
 #   CLOUD_RESOURCE_IP   - IP address of the cloud resource (fallback for lookup)
 #   DASHBOARD_PORT      - Port of the dashboard on this machine
 #   PW_USER             - ACTIVATE username for SSH
+#   PW_SSH_KEY          - Path to SSH key (default: ~/.ssh/pwcli)
 
 set -e
+
+# SSH key — configurable via env var, default to standard location
+PW_SSH_KEY="${PW_SSH_KEY:-${HOME}/.ssh/pwcli}"
+if [ ! -f "${PW_SSH_KEY}" ]; then
+    echo "[WARN] SSH key not found at ${PW_SSH_KEY}"
+    # Try common alternatives
+    for key in "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ed25519"; do
+        if [ -f "${key}" ]; then
+            PW_SSH_KEY="${key}"
+            echo "  Using fallback key: ${PW_SSH_KEY}"
+            break
+        fi
+    done
+fi
 
 echo "=========================================="
 echo "Setting up reverse tunnel: $(date)"
@@ -55,7 +70,7 @@ echo "SSH target: ${SSH_TARGET}"
 
 # Helper: run command on cloud via pw ssh proxy
 run_on_cloud() {
-    ssh -i ~/.ssh/pwcli \
+    ssh -i "${PW_SSH_KEY}" \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
         -o ProxyCommand="pw ssh --proxy-command %h" \
@@ -76,7 +91,7 @@ echo "${TUNNEL_PORT}" > "${JOB_DIR}/TUNNEL_PORT"
 
 # Start reverse SSH tunnel: cloud:TUNNEL_PORT -> onprem:DASHBOARD_PORT
 echo "Establishing reverse SSH tunnel..."
-ssh -i ~/.ssh/pwcli \
+ssh -i "${PW_SSH_KEY}" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ExitOnForwardFailure=yes \
