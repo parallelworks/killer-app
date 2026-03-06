@@ -23,7 +23,7 @@ state = {
     "start_time": None,
     "site_stats": {},     # site_id -> {count, total_render_ms, last_ts}
 }
-connected_ws: list[WebSocket] = []
+connected_ws = []  # list of WebSocket
 
 
 @app.get("/", response_class=HTMLResponse)
