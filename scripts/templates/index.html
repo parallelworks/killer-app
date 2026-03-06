@@ -11,9 +11,10 @@
     --border: #1e2a3a;
     --text: #e0e6f0;
     --dim: #6b7a90;
-    --cloud: #3b82f6;
-    --onprem: #f59e0b;
     --accent: #22d3ee;
+    --green: #22c55e;
+    --site1: #3b82f6;
+    --site2: #f59e0b;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
@@ -209,7 +210,7 @@
   .progress-bar-inner {
     height: 100%;
     border-radius: 12px;
-    background: linear-gradient(90deg, var(--cloud), var(--accent));
+    background: linear-gradient(90deg, var(--site1), var(--accent));
     transition: width 0.3s ease;
     min-width: 0;
   }
@@ -414,7 +415,7 @@
       <div class="card-title">Compute Sites</div>
       <div id="sites-container">
         <div class="site-card" style="opacity: 0.4;">
-          <div class="site-icon" style="background:rgba(59,130,246,0.15); color:var(--cloud);">&#9729;</div>
+          <div class="site-icon" style="background:rgba(59,130,246,0.15); color:var(--site1);">&#9729;</div>
           <div class="site-info">
             <div class="site-name">Waiting for tiles...</div>
             <div class="site-detail">Sites appear as tiles arrive</div>
