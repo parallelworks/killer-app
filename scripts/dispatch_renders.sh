@@ -212,13 +212,12 @@ mkdir -p "\${WORK}"
 cd "\${WORK}"
 export PW_PARENT_JOB_DIR="\${WORK}"
 
-# Checkout if not already done
-if [ ! -f scripts/render_tiles.sh ]; then
-    echo 'Checking out scripts...'
-    git clone --depth 1 --sparse --filter=blob:none ${REPO_URL} _checkout_tmp 2>/dev/null
-    cd _checkout_tmp && git sparse-checkout set scripts 2>/dev/null && cd ..
-    cp -r _checkout_tmp/scripts . && rm -rf _checkout_tmp
-fi
+# Always fetch latest scripts
+echo 'Checking out scripts...'
+rm -rf _checkout_tmp scripts
+git clone --depth 1 --sparse --filter=blob:none ${REPO_URL} _checkout_tmp 2>/dev/null
+cd _checkout_tmp && git sparse-checkout set scripts 2>/dev/null && cd ..
+cp -r _checkout_tmp/scripts . && rm -rf _checkout_tmp
 
 # Setup
 bash scripts/setup.sh
@@ -281,13 +280,12 @@ mkdir -p "\${WORK}"
 cd "\${WORK}"
 export PW_PARENT_JOB_DIR="\${WORK}"
 
-# Checkout if not already done
-if [ ! -f scripts/render_tiles.sh ]; then
-    echo 'Checking out scripts...'
-    git clone --depth 1 --sparse --filter=blob:none ${REPO_URL} _checkout_tmp 2>/dev/null
-    cd _checkout_tmp && git sparse-checkout set scripts 2>/dev/null && cd ..
-    cp -r _checkout_tmp/scripts . && rm -rf _checkout_tmp
-fi
+# Always fetch latest scripts
+echo 'Checking out scripts...'
+rm -rf _checkout_tmp scripts
+git clone --depth 1 --sparse --filter=blob:none ${REPO_URL} _checkout_tmp 2>/dev/null
+cd _checkout_tmp && git sparse-checkout set scripts 2>/dev/null && cd ..
+cp -r _checkout_tmp/scripts . && rm -rf _checkout_tmp
 
 # Setup
 bash scripts/setup.sh
