@@ -448,15 +448,19 @@ function getSiteColor(siteId) {
 
 function updateHeaderLegend() {
   const legend = document.getElementById('header-legend');
-  const siteIds = Object.keys(siteStats);
-  if (siteIds.length === 0) return;
-  legend.innerHTML = siteIds.map(siteId => {
-    const s = siteStats[siteId];
+  const connectedIds = Object.keys(siteStats);
+  const pendingIds = Object.keys(pendingSites).filter(sid => !siteStats[sid]);
+  const allIds = [...connectedIds, ...pendingIds];
+  if (allIds.length === 0) return;
+  legend.innerHTML = allIds.map(siteId => {
+    const s = siteStats[siteId] || pendingSites[siteId];
     const color = getSiteColor(siteId);
     const label = s.cluster_name || siteId;
+    const isPending = !siteStats[siteId];
+    const style = isPending ? `opacity:0.5; border:1px dashed ${color}` : `background:${color}`;
     return `<div class="legend-item">
-      <div class="legend-dot" style="background:${color}"></div>
-      <span>${label}</span>
+      <div class="legend-dot" style="${style}; ${isPending ? '' : 'background:' + color}"></div>
+      <span${isPending ? ' style="opacity:0.6"' : ''}>${label}${isPending ? ' ...' : ''}</span>
     </div>`;
   }).join('');
 }
@@ -469,7 +473,8 @@ let completedTiles = 0;
 let startTime = null;
 const tileData = {};
 const siteStats = {};
-const throughputHistory = [];
+const pendingSites = {}; // site_id -> {cluster_name, scheduler_type}
+const throughputHistory = []; // [{ts, total, perSite}]
 let lastThroughputCheck = null;
 let lastTileCounts = {};
 let workloadType = 'fractal'; // always fractal for this dashboard
@@ -996,7 +1001,10 @@ function updateStats(elapsed_s) {
 
   // Status badge
   const badge = document.getElementById('status-badge');
-  if (completedTiles === 0) {
+  if (completedTiles === 0 && Object.keys(pendingSites).length > 0) {
+    badge.className = 'status-badge running';
+    badge.innerHTML = '<div class="pulse" style="background:currentColor"></div> Connecting';
+  } else if (completedTiles === 0) {
     badge.className = 'status-badge waiting';
     badge.innerHTML = '<div class="pulse" style="background:currentColor"></div> Waiting';
   } else if (completedTiles < totalTiles) {
@@ -1007,12 +1015,15 @@ function updateStats(elapsed_s) {
     badge.innerHTML = '<div class="pulse" style="background:currentColor"></div> Complete';
   }
 
-  // Update site cards
+  // Update site cards — show both connected and pending sites
   const container = document.getElementById('sites-container');
-  const siteIds = Object.keys(siteStats);
-  if (siteIds.length > 0) {
+  const connectedIds = Object.keys(siteStats);
+  const pendingIds = Object.keys(pendingSites).filter(sid => !siteStats[sid]);
+  const allSiteIds = [...connectedIds, ...pendingIds];
+  if (allSiteIds.length > 0) {
     container.innerHTML = '';
-    siteIds.forEach((siteId, idx) => {
+    let idx = 0;
+    connectedIds.forEach(siteId => {
       const s = siteStats[siteId];
       const color = getSiteColor(siteId);
       const name = s.cluster_name || siteId;
@@ -1031,6 +1042,27 @@ function updateStats(elapsed_s) {
           </div>
           <div class="site-count" style="color:${color}">${s.count}</div>
         </div>`;
+      idx++;
+    });
+    pendingIds.forEach(siteId => {
+      const p = pendingSites[siteId];
+      const color = getSiteColor(siteId);
+      const name = p.cluster_name || siteId;
+      const scheduler = p.scheduler_type ? ` (${p.scheduler_type})` : '';
+      const siteLabel = `Site ${idx + 1}`;
+      container.innerHTML += `
+        <div class="site-card" style="opacity: 0.6; border: 1px dashed ${color}44;">
+          <div class="site-icon" style="background:${color}10; color:${color}88;">
+            <div class="pulse" style="background:${color}; width:10px; height:10px; border-radius:50%;"></div>
+          </div>
+          <div class="site-info">
+            <div class="site-name" style="color:${color}aa;">${name}${scheduler}</div>
+            <div class="site-detail">
+              <span style="color:${color}88;">${siteLabel} &middot; connecting...</span>
+            </div>
+          </div>
+        </div>`;
+      idx++;
     });
     updateHeaderLegend();
   }
@@ -1074,12 +1106,27 @@ function connect() {
 
   ws.onmessage = (evt) => {
     const msg = JSON.parse(evt.data);
+    if (msg.type === 'pending_site') {
+      pendingSites[msg.site_id] = {cluster_name: msg.cluster_name, scheduler_type: msg.scheduler_type};
+      getSiteColor(msg.site_id); // Pre-assign color
+      updateStats();
+      return;
+    }
     if (msg.type === 'init') {
       gridSize = msg.grid_size;
       imageSize = msg.image_size;
       totalTiles = msg.total;
       completedTiles = msg.completed;
       Object.assign(siteStats, msg.site_stats || {});
+      // Load pending sites
+      if (msg.pending_sites) {
+        Object.keys(msg.pending_sites).forEach(sid => {
+          if (!siteStats[sid]) {
+            pendingSites[sid] = msg.pending_sites[sid];
+            getSiteColor(sid);
+          }
+        });
+      }
 
       // Show fractal tab (this dashboard is always fractal mode)
       document.getElementById('tab-fractal').classList.remove('hidden');
@@ -1097,7 +1144,16 @@ function connect() {
           completedTiles = data.completed_tiles;
           if (data.elapsed_s > 0 && !startTime) startTime = Date.now() / 1000 - data.elapsed_s;
           Object.assign(siteStats, data.site_stats);
-          // Load server-computed throughput history
+          // Load pending sites for late-joiners
+          if (data.pending_sites) {
+            Object.keys(data.pending_sites).forEach(sid => {
+              if (!siteStats[sid]) {
+                pendingSites[sid] = data.pending_sites[sid];
+                getSiteColor(sid);
+              }
+            });
+          }
+          // Load server-computed throughput history for late-joiners
           if (data.throughput_history && data.throughput_history.length > 0) {
             throughputHistory.length = 0;
             const baseTs = startTime || (Date.now() / 1000 - data.elapsed_s);
@@ -1126,6 +1182,14 @@ function connect() {
       tileData[key] = msg;
       completedTiles = msg.completed;
       Object.assign(siteStats, msg.site_stats || {});
+      // Remove from pending — site is now connected
+      delete pendingSites[msg.site_id];
+      // Sync pending_sites from server
+      if (msg.pending_sites) {
+        Object.keys(pendingSites).forEach(sid => {
+          if (!msg.pending_sites[sid]) delete pendingSites[sid];
+        });
+      }
       drawTile(msg.tile_x, msg.tile_y, msg.png_b64, msg.site_id);
       updateStats(msg.elapsed_s);
 

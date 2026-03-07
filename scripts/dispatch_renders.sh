@@ -1,9 +1,9 @@
 #!/bin/bash
 # dispatch_renders.sh — Dispatch tile rendering across N compute sites
 #
-# Runs on the dashboard host (first target). For each target site:
-#   1. Checks out the repo via pw ssh
-#   2. Runs setup
+# Runs on the dashboard host. For each target site:
+#   1. Connects via SSH with reverse tunnel back to dashboard
+#   2. Checks out the repo
 #   3. Launches render_tiles.sh with the site's tile range
 #
 # Environment variables:
@@ -154,78 +154,56 @@ render_site() {
     echo ""
     echo "[${site_id}] Starting render on ${site_name} (${site_ip}): ${num_tiles} tiles [${dispatch_mode}]"
 
-    if [ "${site_index}" -eq 0 ]; then
-        # First site = dashboard host, render locally (repo already checked out)
-        echo "[${site_id}] Rendering locally on dashboard host [${dispatch_mode}]..."
-        (
-            export DASHBOARD_URL="${DASHBOARD_URL}"
-            export SITE_ID="${site_id}"
-            export TILE_START="${tile_start}"
-            export TILE_END="${tile_end}"
-            export GRID_SIZE="${GRID_SIZE}"
-            export IMAGE_SIZE="${IMAGE_SIZE}"
-            export PALETTE="${PALETTE}"
-            if [ "${PARALLELISM}" != "auto" ]; then
-                export NUM_WORKERS="${PARALLELISM}"
-            fi
+    # All sites are remote — dispatch via SSH with reverse tunnel
+    echo "[${site_id}] Dispatching to remote site ${site_name} [${dispatch_mode}]..."
 
-            if [ "${dispatch_mode}" = "slurm" ]; then
-                # Build srun command for local SLURM submission
-                local_srun="srun"
-                [ -n "${slurm_partition}" ] && local_srun="${local_srun} --partition=${slurm_partition}"
-                [ -n "${slurm_account}" ] && local_srun="${local_srun} --account=${slurm_account}"
-                [ -n "${slurm_qos}" ] && local_srun="${local_srun} --qos=${slurm_qos}"
-                [ -n "${slurm_time}" ] && local_srun="${local_srun} --time=${slurm_time}"
-                local_nodes="${slurm_nodes:-1}"
-                local_srun="${local_srun} --nodes=${local_nodes} --ntasks=${local_nodes}"
-                export SCHEDULER_TYPE="slurm"
-                echo "[${site_id}] Submitting to SLURM: ${local_srun} bash ${SCRIPT_DIR}/render_tiles.sh"
-                ${local_srun} bash "${SCRIPT_DIR}/render_tiles.sh"
-            else
-                bash "${SCRIPT_DIR}/render_tiles.sh"
-            fi
-        )
-    else
-        # Remote site — checkout, setup, and render via SSH with reverse tunnel
-        echo "[${site_id}] Dispatching to remote site ${site_name} [${dispatch_mode}]..."
+    # Allocate a port on the remote for the dashboard tunnel
+    local tunnel_port
+    tunnel_port=$(${PW_CMD} ssh "${site_name}" \
+        'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
 
-        # Allocate a port on the remote for the dashboard tunnel
-        local tunnel_port
-        tunnel_port=$(${PW_CMD} ssh "${site_name}" \
-            'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
+    if [ -z "${tunnel_port}" ] || ! [[ "${tunnel_port}" =~ ^[0-9]+$ ]]; then
+        echo "[${site_id}] [ERROR] Failed to allocate tunnel port (got: '${tunnel_port}')"
+        return 1
+    fi
+    echo "[${site_id}] Tunnel port: ${tunnel_port} (remote localhost -> dashboard)"
 
-        if [ -z "${tunnel_port}" ] || ! [[ "${tunnel_port}" =~ ^[0-9]+$ ]]; then
-            echo "[${site_id}] [ERROR] Failed to allocate tunnel port (got: '${tunnel_port}')"
-            return 1
-        fi
-        echo "[${site_id}] Tunnel port: ${tunnel_port} (remote localhost -> dashboard)"
+    # Build srun command if using scheduler
+    local srun_cmd=""
+    if [ "${dispatch_mode}" = "slurm" ]; then
+        srun_cmd="srun"
+        [ -n "${slurm_partition}" ] && srun_cmd="${srun_cmd} --partition=${slurm_partition}"
+        [ -n "${slurm_account}" ] && srun_cmd="${srun_cmd} --account=${slurm_account}"
+        [ -n "${slurm_qos}" ] && srun_cmd="${srun_cmd} --qos=${slurm_qos}"
+        [ -n "${slurm_time}" ] && srun_cmd="${srun_cmd} --time=${slurm_time}"
+        local nodes="${slurm_nodes:-1}"
+        srun_cmd="${srun_cmd} --nodes=${nodes} --ntasks=${nodes}"
+    fi
 
-        # Build srun command if using scheduler
-        local srun_cmd=""
-        if [ "${dispatch_mode}" = "slurm" ]; then
-            srun_cmd="srun"
-            [ -n "${slurm_partition}" ] && srun_cmd="${srun_cmd} --partition=${slurm_partition}"
-            [ -n "${slurm_account}" ] && srun_cmd="${srun_cmd} --account=${slurm_account}"
-            [ -n "${slurm_qos}" ] && srun_cmd="${srun_cmd} --qos=${slurm_qos}"
-            [ -n "${slurm_time}" ] && srun_cmd="${srun_cmd} --time=${slurm_time}"
-            local nodes="${slurm_nodes:-1}"
-            srun_cmd="${srun_cmd} --nodes=${nodes} --ntasks=${nodes}"
-        fi
+    # Build render script
+    local script_file="${WORK_DIR}/render_${site_id}.sh"
 
-        # Build render script
-        local script_file="${WORK_DIR}/render_${site_id}.sh"
-
-        if [ "${dispatch_mode}" = "slurm" ]; then
-            # SLURM mode: run on login node, use srun to dispatch to compute node
-            # Need a TCP proxy to expose the SSH tunnel to compute nodes since
-            # the reverse tunnel only binds to localhost on the login node
-            cat > "${script_file}" <<RENDER_SCRIPT
+    if [ "${dispatch_mode}" = "slurm" ]; then
+        # SLURM mode: run on login node, use srun to dispatch to compute node
+        # Need a TCP proxy to expose the SSH tunnel to compute nodes since
+        # the reverse tunnel only binds to localhost on the login node
+        cat > "${script_file}" <<RENDER_SCRIPT
 #!/bin/bash
 set -e
 WORK=\${PW_PARENT_JOB_DIR:-\${HOME}/pw/jobs/burst_render_remote}
 mkdir -p "\${WORK}"
 cd "\${WORK}"
 export PW_PARENT_JOB_DIR="\${WORK}"
+
+# Kill stale render/proxy processes from prior cancelled runs
+echo 'Cleaning up stale processes from prior runs...'
+pkill -f "render_tiles.sh" 2>/dev/null || true
+pkill -f "python.*renderer.py" 2>/dev/null || true
+for pf in "\${WORK}"/.proxy_*.pid; do
+    [ -f "\${pf}" ] && kill \$(cat "\${pf}" 2>/dev/null) 2>/dev/null && rm -f "\${pf}" || true
+done
+pkill -f "proxy.*\${WORK}" 2>/dev/null || true
+sleep 1
 
 # Always fetch latest scripts
 echo 'Checking out scripts...'
@@ -285,15 +263,25 @@ $([ "${PARALLELISM}" != "auto" ] && echo "export NUM_WORKERS=${PARALLELISM}")
 echo "Submitting to SLURM: ${srun_cmd} bash scripts/render_tiles.sh"
 ${srun_cmd} bash scripts/render_tiles.sh
 RENDER_SCRIPT
-        else
-            # SSH mode: run directly on the remote host
-            cat > "${script_file}" <<RENDER_SCRIPT
+    else
+        # SSH mode: run directly on the remote host
+        cat > "${script_file}" <<RENDER_SCRIPT
 #!/bin/bash
 set -e
 WORK=\${PW_PARENT_JOB_DIR:-\${HOME}/pw/jobs/burst_render_remote}
 mkdir -p "\${WORK}"
 cd "\${WORK}"
 export PW_PARENT_JOB_DIR="\${WORK}"
+
+# Kill stale render/proxy processes from prior cancelled runs
+echo 'Cleaning up stale processes from prior runs...'
+pkill -f "render_tiles.sh" 2>/dev/null || true
+pkill -f "python.*renderer.py" 2>/dev/null || true
+for pf in "\${WORK}"/.proxy_*.pid; do
+    [ -f "\${pf}" ] && kill \$(cat "\${pf}" 2>/dev/null) 2>/dev/null && rm -f "\${pf}" || true
+done
+pkill -f "proxy.*\${WORK}" 2>/dev/null || true
+sleep 1
 
 # Always fetch latest scripts
 echo 'Checking out scripts...'
@@ -317,23 +305,24 @@ $([ "${PARALLELISM}" != "auto" ] && echo "export NUM_WORKERS=${PARALLELISM}")
 
 bash scripts/render_tiles.sh
 RENDER_SCRIPT
-        fi
-
-        # Use raw ssh with pw as ProxyCommand to get -R (reverse tunnel) support
-        # -R forwards remote's tunnel_port to dashboard host's DASHBOARD_PORT
-        local script_content
-        script_content=$(cat "${script_file}")
-        ssh -i ~/.ssh/pwcli \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=15 \
-            -o ProxyCommand="${PW_CMD} ssh --proxy-command %h" \
-            -R "${tunnel_port}:localhost:${DASHBOARD_PORT}" \
-            "${PW_USER}@${site_name}" \
-            "${script_content}" 2>&1 | \
-            sed "s/^/[${site_id}] /"
     fi
+
+    # Use raw ssh with pw as ProxyCommand to get -R (reverse tunnel) support
+    # -R forwards remote's tunnel_port to dashboard host's DASHBOARD_PORT
+    local script_content
+    script_content=$(cat "${script_file}")
+    ssh -i ~/.ssh/pwcli \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=15 \
+        -o ServerAliveCountMax=4 \
+        -o TCPKeepAlive=yes \
+        -o ProxyCommand="${PW_CMD} ssh --proxy-command %h" \
+        -R "${tunnel_port}:localhost:${DASHBOARD_PORT}" \
+        "${PW_USER}@${site_name}" \
+        "${script_content}" 2>&1 | \
+        sed "s/^/[${site_id}] /"
 }
 
 # Launch all sites in parallel
@@ -344,6 +333,7 @@ SITE_STATUSES=()
 for i in $(seq 0 $((NUM_SITES - 1))); do
     site_name=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}]['name'])")
     site_ip=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}]['ip'])")
+    site_scheduler=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}]['scheduler_type'])")
     tile_start=$(echo "${TILE_RANGES}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}]['start'])")
     tile_end=$(echo "${TILE_RANGES}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}]['end'])")
     use_scheduler=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(str(json.load(sys.stdin)[${i}].get('use_scheduler',False)).lower())")
@@ -355,6 +345,12 @@ for i in $(seq 0 $((NUM_SITES - 1))); do
     slurm_nodes=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}].get('slurm_nodes','1'))")
     slurm_directives=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}].get('slurm_directives',''))")
     pbs_directives=$(echo "${SITES_JSON}" | ${PYTHON_CMD} -c "import sys,json;print(json.load(sys.stdin)[${i}].get('pbs_directives',''))")
+
+    # Notify dashboard this site is pending (before dispatch begins)
+    curl -s -X POST "http://localhost:${DASHBOARD_PORT}/api/worker/pending" \
+        -H "Content-Type: application/json" \
+        -d "{\"site_id\": \"site-$((i + 1))\", \"cluster_name\": \"${site_name}\", \"scheduler_type\": \"${site_scheduler}\"}" \
+        >/dev/null 2>&1 || true
 
     render_site "${i}" "${site_name}" "${site_ip}" "${tile_start}" "${tile_end}" \
         "${use_scheduler}" "${scheduler_type}" \

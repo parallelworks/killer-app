@@ -19,7 +19,7 @@ jobs:
       - name: Checkout scripts to dashboard host
         uses: parallelworks/checkout
         ssh:
-          remoteHost: ${{ inputs.targets.0.resource.ip }}
+          remoteHost: ${{ inputs.head.resource.ip }}
         with:
           repo: https://github.com/parallelworks/burst-render-demo.git
           branch: main
@@ -32,7 +32,7 @@ jobs:
   start_dashboard:
     needs: [checkout]
     ssh:
-      remoteHost: ${{ inputs.targets.0.resource.ip }}
+      remoteHost: ${{ inputs.head.resource.ip }}
     steps:
       - name: Run setup
         run: |
@@ -51,7 +51,7 @@ jobs:
   wait_for_dashboard:
     needs: [checkout]
     ssh:
-      remoteHost: ${{ inputs.targets.0.resource.ip }}
+      remoteHost: ${{ inputs.head.resource.ip }}
     steps:
       - name: Wait for dashboard ready
         early-cancel: any-job-failed
@@ -111,7 +111,7 @@ jobs:
   update_session:
     needs: [wait_for_dashboard]
     ssh:
-      remoteHost: ${{ inputs.targets.0.resource.ip }}
+      remoteHost: ${{ inputs.head.resource.ip }}
     steps:
       - name: Get local port
         run: |
@@ -121,7 +121,7 @@ jobs:
       - name: Update session
         uses: parallelworks/update-session
         with:
-          target: ${{ inputs.targets.0.resource.id }}
+          target: ${{ inputs.head.resource.id }}
           name: ${{ sessions.session }}
           remoteHost: ${{ needs.wait_for_dashboard.outputs.HOSTNAME }}
           remotePort: ${{ needs.wait_for_dashboard.outputs.SESSION_PORT }}
@@ -133,7 +133,7 @@ jobs:
   configure_dashboard:
     needs: [wait_for_dashboard]
     ssh:
-      remoteHost: ${{ inputs.targets.0.resource.ip }}
+      remoteHost: ${{ inputs.head.resource.ip }}
     steps:
       - name: Set grid config
         run: |
@@ -159,7 +159,7 @@ jobs:
   render:
     needs: [configure_dashboard, checkout]
     ssh:
-      remoteHost: ${{ inputs.targets.0.resource.ip }}
+      remoteHost: ${{ inputs.head.resource.ip }}
     steps:
       - name: Dispatch renders to all sites
         run: |
@@ -201,19 +201,35 @@ jobs:
   execute:
     inputs:
       # -----------------------------------------------------------------------
-      # Targets (N compute sites)
+      # Dashboard Host
+      # -----------------------------------------------------------------------
+      head:
+        type: group
+        label: Dashboard Host
+        items:
+          resource:
+            label: Resource
+            type: compute-clusters
+            include-workspace: true
+            autoselect: true
+            tooltip: |
+              Runs the live dashboard. No rendering happens here.
+              Select a login node, cloud VM, or the user workspace.
+
+      # -----------------------------------------------------------------------
+      # Compute Sites
       # -----------------------------------------------------------------------
       targets:
         type: list
         label: Compute Sites
         min: 1
-        tooltip: Add one or more compute sites. The first site hosts the live dashboard and renders tiles. Additional sites render tiles in parallel.
+        tooltip: Add one or more compute sites. Each site renders tiles in parallel and streams results to the dashboard.
         template:
           resource:
             label: Resource
             type: compute-clusters
             include-workspace: false
-            tooltip: Select a compute resource. The first resource hosts the dashboard and renders tiles. Additional resources render tiles in parallel.
+            tooltip: Select a compute resource for rendering tiles.
 
           scheduler:
             type: boolean
