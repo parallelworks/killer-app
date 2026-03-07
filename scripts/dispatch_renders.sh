@@ -307,10 +307,8 @@ bash scripts/render_tiles.sh
 RENDER_SCRIPT
     fi
 
-    # Use raw ssh with pw as ProxyCommand to get -R (reverse tunnel) support
+    # Pipe script via stdin to avoid quoting issues with embedded Python/heredocs
     # -R forwards remote's tunnel_port to dashboard host's DASHBOARD_PORT
-    local script_content
-    script_content=$(cat "${script_file}")
     ssh -i ~/.ssh/pwcli \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
@@ -321,7 +319,7 @@ RENDER_SCRIPT
         -o ProxyCommand="${PW_CMD} ssh --proxy-command %h" \
         -R "${tunnel_port}:localhost:${DASHBOARD_PORT}" \
         "${PW_USER}@${site_name}" \
-        "${script_content}" 2>&1 | \
+        'bash -s' < "${script_file}" 2>&1 | \
         sed "s/^/[${site_id}] /"
 }
 
