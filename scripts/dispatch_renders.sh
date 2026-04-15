@@ -182,11 +182,21 @@ render_site() {
     echo "[${site_id}] SSH OK — remote reports: ${probe_stdout}"
 
     # Allocate a port on the remote for the dashboard tunnel.
-    # Pipe the Python source via stdin to avoid nested-quote parsing issues
-    # in some `pw ssh` versions ("Failed to run remote command: Unmatched '"'").
+    # Use direct ssh (not `pw ssh`) because:
+    #   - `pw ssh` does not reliably forward stdin to the remote command,
+    #     so heredoc-piped Python produces no output.
+    #   - Embedding the Python as a -c argument breaks under tcsh login
+    #     shells (ERDC/ARL), which don't honor \" as an escape inside "...".
+    # Using ssh over a `pw ssh --proxy-command` ProxyCommand forwards stdin
+    # cleanly — same pattern used below for the main render dispatch.
     local tunnel_port tunnel_stderr="${WORK_DIR}/tunnel_${site_id}.err"
     set +e
-    tunnel_port=$(${PW_CMD} ssh "${site_name}" python3 2>"${tunnel_stderr}" <<'PYEOF'
+    tunnel_port=$(ssh -i ~/.ssh/pwcli \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o ProxyCommand="${PW_CMD} ssh --proxy-command %h" \
+        "${PW_USER}@${site_name}" \
+        python3 2>"${tunnel_stderr}" <<'PYEOF'
 import socket
 s = socket.socket()
 s.bind(("", 0))
