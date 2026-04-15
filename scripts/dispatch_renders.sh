@@ -181,11 +181,19 @@ render_site() {
     fi
     echo "[${site_id}] SSH OK — remote reports: ${probe_stdout}"
 
-    # Allocate a port on the remote for the dashboard tunnel
+    # Allocate a port on the remote for the dashboard tunnel.
+    # Pipe the Python source via stdin to avoid nested-quote parsing issues
+    # in some `pw ssh` versions ("Failed to run remote command: Unmatched '"'").
     local tunnel_port tunnel_stderr="${WORK_DIR}/tunnel_${site_id}.err"
     set +e
-    tunnel_port=$(${PW_CMD} ssh "${site_name}" \
-        'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>"${tunnel_stderr}")
+    tunnel_port=$(${PW_CMD} ssh "${site_name}" python3 2>"${tunnel_stderr}" <<'PYEOF'
+import socket
+s = socket.socket()
+s.bind(("", 0))
+print(s.getsockname()[1])
+s.close()
+PYEOF
+)
     local tunnel_rc=$?
     set -e
 
