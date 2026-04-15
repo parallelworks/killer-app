@@ -157,13 +157,44 @@ render_site() {
     # All sites are remote — dispatch via SSH with reverse tunnel
     echo "[${site_id}] Dispatching to remote site ${site_name} [${dispatch_mode}]..."
 
-    # Allocate a port on the remote for the dashboard tunnel
-    local tunnel_port
-    tunnel_port=$(${PW_CMD} ssh "${site_name}" \
-        'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>/dev/null)
+    # Probe SSH reachability first — gives a clear error on fresh accounts
+    # where site credentials / SSH keys may not be provisioned yet.
+    echo "[${site_id}] Probing SSH to ${site_name} via: ${PW_CMD} ssh ${site_name} ..."
+    local probe_stderr="${WORK_DIR}/probe_${site_id}.err"
+    local probe_stdout
+    set +e
+    probe_stdout=$(${PW_CMD} ssh "${site_name}" 'echo PW_SSH_OK && hostname' 2>"${probe_stderr}")
+    local probe_rc=$?
+    set -e
+    if [ ${probe_rc} -ne 0 ] || [[ "${probe_stdout}" != *PW_SSH_OK* ]]; then
+        echo "[${site_id}] [ERROR] pw ssh to '${site_name}' failed (exit ${probe_rc})"
+        echo "[${site_id}] [ERROR] stdout: ${probe_stdout:-<empty>}"
+        if [ -s "${probe_stderr}" ]; then
+            echo "[${site_id}] [ERROR] stderr:"
+            sed "s/^/[${site_id}]   /" "${probe_stderr}"
+        fi
+        echo "[${site_id}] [HINT] Common causes on fresh accounts:"
+        echo "[${site_id}] [HINT]   - ~/.ssh/pwcli key not yet provisioned (run 'pw ssh ${site_name} hostname' manually)"
+        echo "[${site_id}] [HINT]   - Site '${site_name}' not authorized for this user (check Activate resource access)"
+        echo "[${site_id}] [HINT]   - Site requires additional onboarding (PIV/CAC, Kerberos, HPC account)"
+        return 1
+    fi
+    echo "[${site_id}] SSH OK — remote reports: ${probe_stdout}"
 
-    if [ -z "${tunnel_port}" ] || ! [[ "${tunnel_port}" =~ ^[0-9]+$ ]]; then
-        echo "[${site_id}] [ERROR] Failed to allocate tunnel port (got: '${tunnel_port}')"
+    # Allocate a port on the remote for the dashboard tunnel
+    local tunnel_port tunnel_stderr="${WORK_DIR}/tunnel_${site_id}.err"
+    set +e
+    tunnel_port=$(${PW_CMD} ssh "${site_name}" \
+        'python3 -c "import socket; s=socket.socket(); s.bind((\"\",0)); print(s.getsockname()[1]); s.close()"' 2>"${tunnel_stderr}")
+    local tunnel_rc=$?
+    set -e
+
+    if [ ${tunnel_rc} -ne 0 ] || [ -z "${tunnel_port}" ] || ! [[ "${tunnel_port}" =~ ^[0-9]+$ ]]; then
+        echo "[${site_id}] [ERROR] Failed to allocate tunnel port (exit ${tunnel_rc}, got: '${tunnel_port}')"
+        if [ -s "${tunnel_stderr}" ]; then
+            echo "[${site_id}] [ERROR] stderr:"
+            sed "s/^/[${site_id}]   /" "${tunnel_stderr}"
+        fi
         return 1
     fi
     echo "[${site_id}] Tunnel port: ${tunnel_port} (remote localhost -> dashboard)"
